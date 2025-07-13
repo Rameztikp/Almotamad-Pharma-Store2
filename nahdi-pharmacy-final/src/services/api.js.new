@@ -1,0 +1,240 @@
+// src/services/api.js
+// Base URL for the API - using Vite proxy in development
+const isDevelopment = import.meta.env.MODE === 'development';
+const API_BASE_URL = isDevelopment ? '/api' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api');
+const API_TIMEOUT = import.meta.env.VITE_API_TIMEOUT || 15000;
+
+console.log("📦 API Configuration:", { 
+  mode: import.meta.env.MODE,
+  baseURL: API_BASE_URL,
+  usingProxy: isDevelopment
+});
+
+class ApiService {
+  constructor() {
+    this.baseURL = API_BASE_URL;
+    this.timeout = API_TIMEOUT;
+    this.token = this.getToken();
+  }
+
+  // Get token from localStorage
+  getToken() {
+    return localStorage.getItem('token') || localStorage.getItem('authToken');
+  }
+
+  // Update token
+  setToken(token) {
+    this.token = token;
+    if (token) {
+      localStorage.setItem('token', token);
+    } else {
+      localStorage.removeItem('token');
+      localStorage.removeItem('authToken');
+    }
+  }
+
+  // Clear authentication
+  clearAuth() {
+    this.token = null;
+    this.setToken(null);
+  }
+
+  // Create headers for requests
+  getHeaders(isFormData = false) {
+    const headers = new Headers();
+    
+    // Set Content-Type if not FormData
+    if (!isFormData) {
+      headers.set('Content-Type', 'application/json');
+    }
+    
+    // Add authorization if token exists
+    const token = this.getToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    
+    return headers;
+  }
+
+  // Handle API responses
+  async handleResponse(response, url) {
+    // Log response info
+    console.group('📥 API Response');
+    console.log('URL:', url);
+    console.log('Status:', response.status, response.statusText);
+    
+    // Handle no content
+    if (response.status === 204) {
+      console.log('No content in response');
+      console.groupEnd();
+      return { success: true };
+    }
+    
+    // Parse response data
+    let responseData;
+    const contentType = response.headers.get('content-type');
+    
+    try {
+      if (contentType && contentType.includes('application/json')) {
+        responseData = await response.json();
+      } else {
+        const text = await response.text();
+        responseData = { message: text };
+      }
+    } catch (error) {
+      console.error('Error parsing response:', error);
+      responseData = { 
+        success: false,
+        message: 'Error parsing server response',
+        error: error.message 
+      };
+    }
+
+    // Handle error responses
+    if (!response.ok) {
+      const errorData = {
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        error: responseData || { message: 'Unknown error occurred' },
+        responseData
+      };
+      
+      console.error('API Error:', errorData);
+
+      // Handle authentication errors
+      if (response.status === 401) {
+        this.clearAuth();
+        // Only redirect if not already on login page
+        if (!window.location.pathname.includes('/login')) {
+          // Store current location for redirect after login
+          sessionStorage.setItem('redirectAfterLogin', window.location.pathname);
+          window.location.href = '/login';
+        }
+        throw new Error('Session expired. Please log in again.');
+      }
+      
+      // Handle forbidden errors
+      if (response.status === 403) {
+        throw new Error('You do not have permission to perform this action.');
+      }
+      
+      // Handle validation errors
+      if (response.status === 422 && responseData.errors) {
+        const validationErrors = Object.entries(responseData.errors)
+          .map(([field, messages]) => `${field}: ${messages.join(', ')}`)
+          .join('\n');
+        throw new Error(`Validation failed:\n${validationErrors}`);
+      }
+      
+      // Handle other errors
+      const errorMessage = responseData.message || 
+                         responseData.error?.message || 
+                         `Request failed with status ${response.status}`;
+      throw new Error(errorMessage);
+    }
+
+    console.log('✅ Request successful:', { url, data: responseData });
+    console.groupEnd();
+    return responseData;
+  }
+
+  // Generic request method with timeout and retry logic
+  async request(method, endpoint, data = null, isFormData = false, retries = 2) {
+    const url = endpoint.startsWith('http') ? endpoint : `${this.baseURL}${endpoint}`;
+    const headers = this.getHeaders(isFormData);
+    
+    const config = {
+      method,
+      headers,
+      credentials: 'include', // Important for cookies/sessions
+      mode: 'cors', // Ensure CORS mode is set
+    };
+    
+    // Add body for non-GET/HEAD requests
+    if (method !== 'GET' && method !== 'HEAD' && data) {
+      config.body = isFormData ? data : JSON.stringify(data);
+    }
+    
+    // Log request details (safely)
+    const safeHeaders = {};
+    headers.forEach((value, key) => {
+      safeHeaders[key] = key.toLowerCase().includes('auth') ? '***' : value;
+    });
+    
+    console.group(`🌐 API Request`);
+    console.log('URL:', url);
+    console.log('Method:', method);
+    console.log('Headers:', safeHeaders);
+    if (method !== 'GET' && data) {
+      console.log('Body:', isFormData ? '[FormData]' : data);
+    }
+    
+    let lastError;
+    
+    for (let i = 0; i < Math.max(1, retries); i++) {
+      try {
+        const response = await Promise.race([
+          fetch(url, config),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`Request timed out after ${this.timeout}ms`)),
+              this.timeout
+            )
+          )
+        ]);
+        
+        const result = await this.handleResponse(response, url);
+        console.groupEnd();
+        return result;
+        
+      } catch (error) {
+        lastError = error;
+        console.warn(`Attempt ${i + 1} failed:`, error.message);
+        
+        // Don't retry for these status codes
+        if (error.message.includes('401') || 
+            error.message.includes('403') || 
+            error.message.includes('404') ||
+            error.message.includes('422')) {
+          break;
+        }
+        
+        // Add delay between retries
+        if (i < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
+      }
+    }
+    
+    console.error(`❌ All ${retries} attempts failed. Last error:`, lastError);
+    console.groupEnd();
+    throw lastError || new Error('Unknown error occurred');
+  }
+
+  // HTTP Methods
+  async get(endpoint, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const url = query ? `${endpoint}?${query}` : endpoint;
+    return this.request('GET', url);
+  }
+
+  async post(endpoint, data, isFormData = false) {
+    return this.request('POST', endpoint, data, isFormData);
+  }
+
+  async put(endpoint, data, isFormData = false) {
+    return this.request('PUT', endpoint, data, isFormData);
+  }
+
+  async patch(endpoint, data, isFormData = false) {
+    return this.request('PATCH', endpoint, data, isFormData);
+  }
+
+  async delete(endpoint) {
+    return this.request('DELETE', endpoint);
+  }
+}
+
+export default new ApiService();
