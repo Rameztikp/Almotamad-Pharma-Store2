@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { toast } from 'react-hot-toast';
-import { useAuth } from '../../../context/AuthContext';
+import { adminApi } from '../../../services/adminApi';
 
 const AdjustStockModal = ({ isOpen, onClose, product, onSuccess }) => {
   const { getToken } = useAuth();
@@ -22,38 +22,31 @@ const AdjustStockModal = ({ isOpen, onClose, product, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    
+    if (!product) return;
     
     try {
-      const token = getToken();
-      const quantity = adjustmentType === 'add' 
-        ? parseInt(formData.quantity, 10) 
-        : -Math.abs(parseInt(formData.quantity, 10));
+      setLoading(true);
       
-      const response = await fetch('http://localhost:8080/api/v1/inventory/adjust', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          productId: product.id,
-          quantity,
-          reason: formData.reason,
-          notes: formData.notes || undefined
-        })
+      const response = await adminApi.adjustInventory({
+        productId: product.id,
+        type: adjustmentType,
+        quantity: Number(formData.quantity),
+        reason: formData.reason,
+        notes: formData.notes || ''
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'فشل في تعديل الكمية');
+      if (response.success) {
+        toast.success('تم تعديل المخزون بنجاح');
+        // Pass the updated product data to parent
+        onSuccess(response.data);
+        onClose();
+      } else {
+        throw new Error(response.message || 'فشل في تعديل المخزون');
       }
-      
-      toast.success('تم تعديل الكمية بنجاح');
-      onSuccess();
-      onClose();
     } catch (error) {
-      toast.error(error.message);
+      console.error('Error adjusting stock:', error);
+      toast.error(error.message || 'حدث خطأ أثناء تعديل المخزون');
     } finally {
       setLoading(false);
     }

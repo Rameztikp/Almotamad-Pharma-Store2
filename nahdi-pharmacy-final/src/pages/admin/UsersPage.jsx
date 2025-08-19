@@ -1,87 +1,138 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { FaSearch, FaUserPlus, FaUserEdit, FaTrash, FaUserCheck, FaUserTimes } from 'react-icons/fa';
+import { adminApi } from '../../services/adminApi';
 
 const UsersPage = () => {
   const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('admin'); // افتراضي: عرض مستخدمي لوحة التحكم (مسؤول)
+  const [statusFilter, setStatusFilter] = useState('all'); // values: all | active | suspended
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // Simulate fetching users from API
+  // أدوار لوحة التحكم فقط
+  const roleOptions = useMemo(() => ([
+    { value: 'admin', label: 'مسؤول' },
+    { value: 'super_admin', label: 'مشرف عام' },
+  ]), []);
+
+  const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null, onCancel: null });
+  const [pendingRoleChange, setPendingRoleChange] = useState(null); // { id, newRole }
+
+  // Fetch users from backend
   useEffect(() => {
     const fetchUsers = async () => {
+      setLoading(true);
       try {
-        // TODO: Replace with actual API call
-        // const response = await api.get('/api/admin/users');
-        // setUsers(response.data);
-        
-        // Mock data for now
-        const roles = ['مدير', 'مشرف', 'عميل'];
-        const statuses = ['نشط', 'غير نشط', 'موقوف'];
-        const mockUsers = Array(15).fill(0).map((_, i) => ({
-          id: i + 1,
-          name: `مستخدم ${i + 1}`,
-          email: `user${i + 1}@example.com`,
-          phone: `+9665${Math.floor(10000000 + Math.random() * 90000000)}`,
-          role: roles[Math.floor(Math.random() * roles.length)],
-          status: statuses[Math.floor(Math.random() * statuses.length)],
-          joinDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toLocaleDateString('ar-EG'),
+        const params = {
+          page: currentPage,
+          limit: itemsPerPage,
+          search: searchTerm || undefined,
+          role: roleFilter !== 'all' ? roleFilter : undefined,
+        };
+        const res = await adminApi.getUsers(params);
+        const data = res?.data?.customers || [];
+        const totalCount = res?.data?.total || data.length;
+
+        // Normalize user items to UI shape
+        const normalized = data.map((u) => ({
+          id: u.id,
+          name: u.full_name || u.fullName || '-',
+          email: u.email || '-',
+          phone: u.phone || '-',
+          role: u.role || 'customer',
+          account_type: u.account_type || (u.role === 'wholesale' ? 'wholesale' : 'retail'),
+          is_active: !!u.is_active,
+          created_at: u.created_at,
         }));
-        
-        setUsers(mockUsers);
-        setLoading(false);
+
+        setUsers(normalized);
+        setTotal(totalCount);
       } catch (error) {
         console.error('Error fetching users:', error);
+      } finally {
         setLoading(false);
       }
     };
-
     fetchUsers();
-  }, []);
+  }, [currentPage, itemsPerPage, searchTerm, roleFilter]);
 
-  const handleStatusToggle = async (userId, currentStatus) => {
-    const newStatus = currentStatus === 'نشط' ? 'موقوف' : 'نشط';
-    
-    try {
-      // TODO: Replace with actual API call
-      // await api.put(`/api/admin/users/${userId}/status`, { status: newStatus });
-      
-      // Update local state
-      setUsers(users.map(user => 
-        user.id === userId ? { ...user, status: newStatus } : user
-      ));
-    } catch (error) {
-      console.error('Error updating user status:', error);
-    }
+  const handleStatusToggle = (user) => {
+    const isActive = !!user.is_active;
+    const newActive = !isActive;
+    setConfirm({
+      open: true,
+      title: newActive ? 'تأكيد تفعيل المستخدم' : 'تأكيد تعليق المستخدم',
+      message: `هل أنت متأكد من ${newActive ? 'تفعيل' : 'تعليق'} المستخدم "${user.name}"؟`,
+      onConfirm: async () => {
+        try {
+          await adminApi.updateUserStatus(user.id, { isActive: newActive });
+          setUsers((prev) => prev.map(u => u.id === user.id ? { ...u, is_active: newActive } : u));
+        } catch (error) {
+          console.error('Error updating user status:', error);
+        } finally {
+          setConfirm((c) => ({ ...c, open: false }));
+        }
+      },
+      onCancel: () => setConfirm((c) => ({ ...c, open: false })),
+    });
   };
 
-  const handleDeleteUser = async (userId) => {
-    if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟ لا يمكن التراجع عن هذا الإجراء.')) {
-      try {
-        // TODO: Replace with actual API call
-        // await api.delete(`/api/admin/users/${userId}`);
-        
-        // Update local state
-        setUsers(users.filter(user => user.id !== userId));
-      } catch (error) {
-        console.error('Error deleting user:', error);
-      }
-    }
+  const handleDeleteUser = (user) => {
+    setConfirm({
+      open: true,
+      title: 'تأكيد حذف المستخدم',
+      message: 'هل أنت متأكد من حذف هذا المستخدم؟ لا يمكن التراجع عن هذا الإجراء.',
+      onConfirm: async () => {
+        try {
+          await adminApi.deleteUser(user.id);
+          setUsers((prev) => prev.filter(u => u.id !== user.id));
+          setTotal((t) => Math.max(0, t - 1));
+        } catch (error) {
+          console.error('Error deleting user:', error);
+        } finally {
+          setConfirm((c) => ({ ...c, open: false }));
+        }
+      },
+      onCancel: () => setConfirm((c) => ({ ...c, open: false })),
+    });
+  };
+
+  const handleRoleChange = (user, newRole) => {
+    if (user.role === newRole) return;
+    setPendingRoleChange({ id: user.id, newRole });
+    setConfirm({
+      open: true,
+      title: 'تأكيد تغيير الدور',
+      message: `هل تريد تغيير دور المستخدم "${user.name}" إلى "${roleOptions.find(r => r.value === newRole)?.label || newRole}"؟`,
+      onConfirm: async () => {
+        try {
+          await adminApi.updateUser(user.id, { role: newRole });
+          setUsers((prev) => prev.map(u => u.id === user.id ? { ...u, role: newRole } : u));
+        } catch (error) {
+          console.error('Error updating user role:', error);
+        } finally {
+          setPendingRoleChange(null);
+          setConfirm((c) => ({ ...c, open: false }));
+        }
+      },
+      onCancel: () => {
+        setPendingRoleChange(null);
+        setConfirm((c) => ({ ...c, open: false }));
+      },
+    });
   };
 
   const filteredUsers = users.filter(user => {
     const matchesSearch = 
-      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.phone.includes(searchTerm);
-    
+      (user.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.phone || '').includes(searchTerm);
     const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-    const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
-    
+    const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? user.is_active : !user.is_active);
     return matchesSearch && matchesRole && matchesStatus;
   });
 
@@ -89,7 +140,7 @@ const UsersPage = () => {
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil((total || filteredUsers.length) / itemsPerPage));
 
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
 
@@ -106,8 +157,8 @@ const UsersPage = () => {
       <div className="p-6 border-b border-gray-200">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-800">إدارة المستخدمين</h2>
-            <p className="mt-1 text-sm text-gray-500">عرض وإدارة مستخدمي النظام</p>
+            <h2 className="text-xl font-semibold text-gray-800">إدارة مستخدمي لوحة التحكم</h2>
+            <p className="mt-1 text-sm text-gray-500">عرض وإدارة حسابات المسؤولين والمشرفين</p>
           </div>
           <div className="mt-4 md:mt-0">
             <Link
@@ -142,7 +193,7 @@ const UsersPage = () => {
 
           <div>
             <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-              الدور
+              الدور الإداري
             </label>
             <select
               id="role"
@@ -150,10 +201,9 @@ const UsersPage = () => {
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
             >
-              <option value="all">الكل</option>
-              <option value="مدير">مدير</option>
-              <option value="مشرف">مشرف</option>
-              <option value="عميل">عميل</option>
+              {roleOptions.map(r => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
             </select>
           </div>
 
@@ -168,9 +218,8 @@ const UsersPage = () => {
               onChange={(e) => setStatusFilter(e.target.value)}
             >
               <option value="all">الكل</option>
-              <option value="نشط">نشط</option>
-              <option value="غير نشط">غير نشط</option>
-              <option value="موقوف">موقوف</option>
+              <option value="active">نشط</option>
+              <option value="suspended">موقوف</option>
             </select>
           </div>
         </div>
@@ -190,6 +239,11 @@ const UsersPage = () => {
                 <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   الهاتف
                 </th>
+                {false && (
+                  <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    نوع الحساب
+                  </th>
+                )}
                 <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   الدور
                 </th>
@@ -210,7 +264,7 @@ const UsersPage = () => {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
-                        <span className="text-gray-600">{user.name.charAt(0)}</span>
+                        <span className="text-gray-600">{(user.name || '-').charAt(0)}</span>
                       </div>
                       <div className="mr-4">
                         <div className="text-sm font-medium text-gray-900">{user.name}</div>
@@ -224,30 +278,39 @@ const UsersPage = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {user.phone}
                   </td>
+                  {false && (
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        user.account_type === 'wholesale'
+                          ? 'bg-indigo-100 text-indigo-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {user.account_type === 'wholesale' ? 'جملة' : 'تجزئة'}
+                      </span>
+                    </td>
+                  )}
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      user.role === 'مدير' 
-                        ? 'bg-purple-100 text-purple-800' 
-                        : user.role === 'مشرف' 
-                          ? 'bg-blue-100 text-blue-800' 
-                          : 'bg-green-100 text-green-800'
-                    }`}>
-                      {user.role}
-                    </span>
+                    <select
+                      value={user.role}
+                      onChange={(e) => handleRoleChange(user, e.target.value)}
+                      className="block w-full text-sm border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {roleOptions.filter(r => r.value !== 'all').map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      user.status === 'نشط' 
+                      user.is_active 
                         ? 'bg-green-100 text-green-800' 
-                        : user.status === 'موقوف' 
-                          ? 'bg-red-100 text-red-800' 
-                          : 'bg-yellow-100 text-yellow-800'
+                        : 'bg-red-100 text-red-800'
                     }`}>
-                      {user.status}
+                      {user.is_active ? 'نشط' : 'موقوف'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {user.joinDate}
+                    {user.created_at ? new Date(user.created_at).toLocaleDateString('ar-EG') : '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2 space-x-reverse">
@@ -259,10 +322,10 @@ const UsersPage = () => {
                         تعديل
                       </Link>
                       <button
-                        onClick={() => handleStatusToggle(user.id, user.status)}
-                        className={`${user.status === 'نشط' ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`}
+                        onClick={() => handleStatusToggle(user)}
+                        className={`${user.is_active ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`}
                       >
-                        {user.status === 'نشط' ? (
+                        {user.is_active ? (
                           <>
                             <FaUserTimes className="inline ml-1" />
                             تعطيل
@@ -275,7 +338,7 @@ const UsersPage = () => {
                         )}
                       </button>
                       <button
-                        onClick={() => handleDeleteUser(user.id)}
+                        onClick={() => handleDeleteUser(user)}
                         className="text-red-600 hover:text-red-900"
                       >
                         <FaTrash className="inline ml-1" />
@@ -350,6 +413,34 @@ const UsersPage = () => {
             >
               التالي
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirm.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900 text-right">{confirm.title}</h3>
+            </div>
+            <div className="px-6 py-4 text-right text-gray-700">
+              {confirm.message}
+            </div>
+            <div className="px-6 py-4 bg-gray-50 flex justify-end space-x-3 space-x-reverse">
+              <button
+                onClick={() => confirm.onCancel && confirm.onCancel()}
+                className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-100"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={() => confirm.onConfirm && confirm.onConfirm()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                تأكيد
+              </button>
+            </div>
           </div>
         </div>
       )}

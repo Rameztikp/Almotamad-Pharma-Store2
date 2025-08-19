@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { FaTimes, FaUpload, FaTrash } from 'react-icons/fa';
+import { FaTimes, FaUpload, FaTrash, FaSpinner } from 'react-icons/fa';
 import { toast } from 'react-toastify';
+import productService from '../../../services/productService';
+import { categoryService } from '../../../services/categoryService';
+import SearchableSelect from '../../../components/SearchableSelect';
 
-const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) => {
+const ProductForm = ({ isOpen, onClose, onSubmit, product, type }) => {
+  const [categories, setCategories] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [formData, setFormData] = useState({
     // General product fields
     name: '',
     description: '',
     price: '',
-    category: categories[0] || '',
+    category_id: '',
     stock: '',
     images: [],
     brand: '',
     sku: '',
     barcode: '',
+    isActive: true,
     
     // Medicine specific fields
     isMedicine: false,
@@ -29,9 +35,47 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
     contraindications: ''
   });
   
+  const [errors, setErrors] = useState({});
+  const [isUploading, setIsUploading] = useState(false);
   const [showMedicineFields, setShowMedicineFields] = useState(false);
   const [previewImages, setPreviewImages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Fetch categories on component mount
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await categoryService.getCategories();
+        // التأكد من أن الاستجابة تحتوي على مصفوفة الفئات
+        const fetchedCategories = response.data || response;
+        
+        if (Array.isArray(fetchedCategories)) {
+          setCategories(fetchedCategories);
+          
+          // تعيين الفئة الافتراضية إذا لم يكن هناك منتج قيد التعديل
+          if (!product && fetchedCategories.length > 0) {
+            setFormData(prev => ({
+              ...prev,
+              category_id: fetchedCategories[0].id
+            }));
+          }
+        } else {
+          console.error('تنسيق بيانات الفئات غير متوقع:', fetchedCategories);
+          toast.error('حدث خطأ في تحميل الفئات');
+          setCategories([]);
+        }
+      } catch (error) {
+        console.error('خطأ في جلب الفئات:', error);
+        toast.error('فشل تحميل الفئات. يرجى المحاولة مرة أخرى');
+        setCategories([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
 
   useEffect(() => {
     if (product) {
@@ -39,7 +83,7 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
         name: product.name || '',
         description: product.description || '',
         price: product.price || '',
-        category: product.category || categories[0] || '',
+        category_id: product.category_id || '',
         stock: product.stock || '',
         images: product.images || [],
         brand: product.brand || '',
@@ -64,7 +108,7 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
         name: '',
         description: '',
         price: '',
-        category: categories[0] || '',
+        category_id: categories[0] || '',
         stock: '',
         images: [],
         brand: '',
@@ -164,56 +208,139 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
     e.preventDefault();
     
     // Basic validation
-    if (!formData.name || !formData.price || !formData.category || formData.stock === '') {
+    const newErrors = {};
+    if (!formData.name) newErrors.name = 'اسم المنتج مطلوب';
+    if (!formData.price) newErrors.price = 'السعر مطلوب';
+    if (!formData.category_id) newErrors.category = 'الفئة مطلوبة';
+    if (!formData.stock) newErrors.stock = 'الكمية المتوفرة مطلوبة';
+    
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
       toast.error('الرجاء ملء جميع الحقول المطلوبة');
+      return;
+    }
+    
+    if (previewImages.length === 0) {
+      toast.error('الرجاء إضافة صورة واحدة على الأقل للمنتج');
       return;
     }
     
     setIsSubmitting(true);
     
     try {
-      // Prepare the product data
+      // 1. Upload images first if there are new ones
+      let imageUrls = [...previewImages];
+      
+      const filesToUpload = previewImages
+        .filter(img => typeof img !== 'string')
+        .map(img => img.file || img);
+      
+      if (filesToUpload.length > 0) {
+        setIsUploading(true);
+        setUploadProgress(0);
+        
+        try {
+          const uploadedUrls = await productService.uploadImages(filesToUpload);
+          imageUrls = [
+            ...previewImages
+              .filter(img => typeof img === 'string')
+              .map(img => ({
+                url: img,
+                isPrimary: false
+              })),
+            ...uploadedUrls.map(url => ({
+              url,
+              isPrimary: false
+            }))
+          ];
+          
+          // Set the first image as primary
+          if (imageUrls.length > 0) {
+            imageUrls[0].isPrimary = true;
+          }
+          
+          setUploadProgress(100);
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error) {
+          console.error('Error uploading images:', error);
+          toast.error('حدث خطأ أثناء رفع الصور');
+          throw error;
+        } finally {
+          setIsUploading(false);
+          setUploadProgress(0);
+        }
+      }
+      
+      // 2. Prepare product data with type
       const productData = {
-        name: formData.name,
-        description: formData.description,
-        price: parseFloat(formData.price),
-        category: formData.category,
-        stock: parseInt(formData.stock, 10),
-        brand: formData.brand,
-        sku: formData.sku,
-        barcode: formData.barcode,
-        isMedicine: formData.isMedicine,
-        images: formData.images,
-        type: type // 'retail' or 'wholesale'
+        ...formData,
+        images: imageUrls,
+        type: type || 'retail', // تأكيد نوع المنتج
+        // تحويل القيم الرقمية
+        price: parseFloat(formData.price) || 0,
+        stock: parseInt(formData.stock, 10) || 0,
+        // تعيين القيم الافتراضية للحقول الاختيارية
+        brand: formData.brand || '',
+        sku: formData.sku || '',
+        barcode: formData.barcode || ''
       };
       
-      // Add medicine-specific fields if this is a medicine
+      // 3. Add medicine-specific fields if this is a medicine
       if (formData.isMedicine) {
-        productData.expiryDate = formData.expiryDate;
-        productData.batchNumber = formData.batchNumber;
-        productData.manufacturer = formData.manufacturer;
-        productData.requiresPrescription = formData.requiresPrescription;
-        productData.activeIngredient = formData.activeIngredient;
-        productData.dosageForm = formData.dosageForm;
-        productData.strength = formData.strength;
-        productData.storageConditions = formData.storageConditions;
-        productData.sideEffects = formData.sideEffects;
-        productData.contraindications = formData.contraindications;
+        productData.medicine_fields = {
+          active_ingredient: formData.activeIngredient || '',
+          dosage: formData.dosageForm || '',
+          expiration_date: formData.expiryDate,
+          batch_number: formData.batchNumber || '',
+          manufacturer: formData.manufacturer || '',
+          requires_prescription: formData.requiresPrescription || false,
+          strength: formData.strength || '',
+          storage_conditions: formData.storageConditions || '',
+          side_effects: formData.sideEffects || '',
+          contraindications: formData.contraindications || ''
+        };
       }
       
-      // If editing, include the product ID
-      if (product?.id) {
-        productData.id = product.id;
-      }
+      console.log('Submitting product data:', JSON.stringify(productData, null, 2));
       
-      // Call the parent component's onSubmit handler with the prepared data
+      // 4. Submit the product data
       await onSubmit(productData);
+      
+      // 5. Reset form
+      setFormData({
+        name: '',
+        description: '',
+        price: '',
+        category_id: categories[0]?.id || '',
+        stock: '',
+        images: [],
+        brand: '',
+        sku: '',
+        barcode: '',
+        isMedicine: false,
+        expiryDate: '',
+        batchNumber: '',
+        manufacturer: '',
+        requiresPrescription: false,
+        activeIngredient: '',
+        dosageForm: '',
+        strength: '',
+        storageConditions: '',
+        sideEffects: '',
+        contraindications: ''
+      });
+      setPreviewImages([]);
+      setErrors({});
+      
+      // 6. Close the form
       onClose();
+      
     } catch (error) {
-      console.error('Error submitting form:', error);
-      toast.error(error.message || 'حدث خطأ أثناء حفظ المنتج');
+      console.error('Error submitting product:', error);
+      toast.error(error.message || error.response?.data?.message || 'حدث خطأ أثناء حفظ المنتج');
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(0);
     }
   };
 
@@ -240,72 +367,74 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
             <div className="mb-6">
               <h3 className="text-lg font-medium text-gray-900 mb-4">المعلومات الأساسية</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  اسم المنتج <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  disabled={isSubmitting}
-                />
-              </div>
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    اسم المنتج <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={isSubmitting}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="category_id">
+                    الفئة <span className="text-red-500">*</span>
+                  </label>
+                  <SearchableSelect
+                    options={categories.map(cat => ({
+                      value: cat.id,
+                      label: cat.name_ar || cat.name
+                    }))}
+                    value={formData.category_id}
+                    onChange={(value) => setFormData(prev => ({
+                      ...prev,
+                      category_id: value
+                    }))}
+                    placeholder="اختر فئة المنتج"
+                    loading={isLoading}
+                    noOptionsMessage="لا توجد فئات متاحة"
+                  />
+                  {errors.category_id && (
+                    <p className="text-red-500 text-xs italic mt-1">{errors.category_id}</p>
+                  )}
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    السعر (ر.س) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    name="price"
+                    value={formData.price}
+                    onChange={handleChange}
+                    min="0"
+                    step="0.01"
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                    disabled={isSubmitting}
+                  />
+                </div>
               
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  الفئة <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  disabled={isSubmitting}
-                >
-                  {categories.map(category => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  السعر (ر.س) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  name="price"
-                  value={formData.price}
-                  onChange={handleChange}
-                  min="0"
-                  step="0.01"
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  disabled={isSubmitting}
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  الكمية المتوفرة <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  name="stock"
-                  value={formData.stock}
-                  onChange={handleChange}
-                  min="0"
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  disabled={isSubmitting}
-                />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    الكمية المتوفرة <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    name="stock"
+                    value={formData.stock}
+                    onChange={handleChange}
+                    min="0"
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                    disabled={isSubmitting}
+                  />
+                </div>
               </div>
               
               <div className="md:col-span-2">
@@ -324,42 +453,70 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, categories, type }) =
               
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  صور المنتج
+                  صور المنتج <span className="text-red-500">*</span>
                 </label>
-                <div className="flex flex-wrap gap-4">
-                  <label className="flex flex-col items-center justify-center w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                    <FaUpload className="text-gray-400 text-2xl mb-2" />
-                    <span className="text-sm text-gray-500">رفع صورة</span>
-                    <input
-                      type="file"
-                      className="hidden"
-                      accept="image/*"
-                      multiple
-                      onChange={handleImageUpload}
-                      disabled={isSubmitting}
-                    />
-                  </label>
-                  
-                  {previewImages.map((img, index) => (
-                    <div key={index} className="relative group">
-                      <img
-                        src={typeof img === 'string' ? img : img.preview}
-                        alt={`Preview ${index + 1}`}
-                        className="w-32 h-32 object-cover rounded-lg"
+                <div className="space-y-4">
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex flex-col items-center justify-center w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                      {isUploading ? (
+                        <div className="flex flex-col items-center">
+                          <FaSpinner className="animate-spin text-blue-500 text-2xl mb-2" />
+                          <span className="text-xs text-gray-500">جاري الرفع...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <FaUpload className="text-gray-400 text-2xl mb-2" />
+                          <span className="text-sm text-gray-500">رفع صورة</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        multiple
+                        onChange={handleImageUpload}
+                        disabled={isSubmitting || isUploading}
                       />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(index)}
-                        className="absolute top-1 left-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                        disabled={isSubmitting}
-                      >
-                        <FaTrash size={12} />
-                      </button>
+                    </label>
+                    
+                    {previewImages.map((img, index) => (
+                      <div key={index} className="relative group">
+                        <img
+                          src={typeof img === 'string' ? img : (img.preview || URL.createObjectURL(img))}
+                          alt={`Preview ${index + 1}`}
+                          className="w-32 h-32 object-cover rounded-lg"
+                          onLoad={() => {
+                            if (typeof img !== 'string' && img.preview) {
+                              URL.revokeObjectURL(img.preview);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute top-1 left-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          disabled={isSubmitting || isUploading}
+                        >
+                          <FaTrash size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {uploadProgress > 0 && uploadProgress < 100 && (
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                      <div 
+                        className="bg-blue-600 h-2.5 rounded-full" 
+                        style={{ width: `${uploadProgress}%` }}
+                      ></div>
                     </div>
-                  ))}
+                  )}
+                  
+                  <p className="text-xs text-gray-500">
+                    يمكنك رفع حتى 5 صور كحد أقصى. الصيغ المدعومة: JPG, PNG, WebP
+                  </p>
                 </div>
               </div>
-            </div>
             </div>
             
             {/* Additional Product Info */}

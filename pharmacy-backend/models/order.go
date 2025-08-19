@@ -2,6 +2,7 @@ package models
 
 import (
 	"time"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -37,8 +38,8 @@ type Order struct {
 	DiscountAmount    float64       `json:"discount_amount" gorm:"default:0"`
 	PaymentMethod     string        `json:"payment_method"`
 	PaymentStatus     PaymentStatus `json:"payment_status" gorm:"type:varchar(20);default:'pending'"`
-	ShippingAddress   Address       `json:"shipping_address" gorm:"type:jsonb"`
-	BillingAddress    *Address      `json:"billing_address,omitempty" gorm:"type:jsonb"` // يمكن أن يكون فارغاً
+	ShippingAddress   Address       `json:"shipping_address" gorm:"type:jsonb;serializer:json"`
+	BillingAddress    *Address      `json:"billing_address,omitempty" gorm:"type:jsonb;serializer:json"` // يمكن أن يكون فارغاً
 	Notes             string        `json:"notes,omitempty" gorm:"type:text"`
 	EstimatedDelivery *time.Time    `json:"estimated_delivery,omitempty"`
 	ActualDelivery    *time.Time    `json:"actual_delivery,omitempty"`

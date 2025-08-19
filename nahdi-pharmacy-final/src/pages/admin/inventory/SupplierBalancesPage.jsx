@@ -15,6 +15,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../../context/AuthContext';
+import { adminApi } from '../../../services/adminApi';
 import PurchaseInvoiceModal from '../../../components/admin/inventory/PurchaseInvoiceModal';
 import SupplierAccountStatement from '../../../components/admin/inventory/SupplierAccountStatement';
 
@@ -35,48 +36,39 @@ const SupplierBalancesPage = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = getToken();
         setLoading(true);
         
         if (view === 'suppliers' || !selectedSupplier) {
-          // Fetch suppliers and products
-          const [suppliersRes, productsRes] = await Promise.all([
-            fetch('http://localhost:8080/api/v1/suppliers', {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            }),
-            fetch('http://localhost:8080/api/v1/products', {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            })
+          // Fetch suppliers and products using adminApi
+          const [suppliersResult, productsResult] = await Promise.all([
+            adminApi.getSuppliers(),
+            adminApi.getInventory()
           ]);
           
-          if (!suppliersRes.ok) throw new Error('فشل في تحميل بيانات الموردين');
-          if (!productsRes.ok) throw new Error('فشل في تحميل بيانات المنتجات');
+          // Handle suppliers response
+          if (suppliersResult.success) {
+            setSuppliers(suppliersResult.data || []);
+          } else {
+            throw new Error(suppliersResult.message || 'فشل في تحميل بيانات الموردين');
+          }
           
-          const [suppliersData, productsData] = await Promise.all([
-            suppliersRes.json(),
-            productsRes.json()
-          ]);
-          
-          setSuppliers(suppliersData);
-          setProducts(productsData);
+          // Handle products response
+          if (productsResult.success) {
+            setProducts(productsResult.data || []);
+          } else {
+            throw new Error(productsResult.message || 'فشل في تحميل المنتجات');
+          }
         } else if (selectedSupplier) {
-          // Fetch supplier invoices
-          const invoicesRes = await fetch(`http://localhost:8080/api/v1/admin/purchase-invoices?supplier_id=${selectedSupplier.id}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
+          // Fetch supplier invoices using adminApi
+          const invoicesResult = await adminApi.getPurchaseInvoices({ 
+            supplier_id: selectedSupplier.id 
           });
           
-          if (!invoicesRes.ok) throw new Error('فشل في تحميل فواتير المشتريات');
-          const invoicesData = await invoicesRes.json();
-          setInvoices(invoicesData.data || []);
+          if (invoicesResult.success) {
+            setInvoices(invoicesResult.data || []);
+          } else {
+            throw new Error(invoicesResult.message || 'فشل في تحميل فواتير المشتريات');
+          }
         }
       } catch (error) {
         toast.error(error.message);
@@ -86,60 +78,48 @@ const SupplierBalancesPage = () => {
     };
 
     fetchData();
-  }, [getToken, view, selectedSupplier]);
+  }, [view, selectedSupplier]);
   
   // Handle saving purchase invoice
   const handleSaveInvoice = async (invoiceData) => {
     try {
       const token = getToken();
-      const response = await fetch('http://localhost:8080/api/v1/admin/purchase-invoices', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(invoiceData)
-      });
+      const response = await adminApi.createPurchaseInvoice(invoiceData);
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'فشل في حفظ الفاتورة');
-      }
-      
-      // Refresh data
-      const [suppliersRes, productsRes] = await Promise.all([
-        fetch('http://localhost:8080/api/v1/suppliers', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }),
-        fetch('http://localhost:8080/api/v1/products', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-      ]);
-      
-      const [updatedSuppliers, updatedProducts] = await Promise.all([
-        suppliersRes.json(),
-        productsRes.json()
-      ]);
-      
-      setSuppliers(updatedSuppliers);
-      setProducts(updatedProducts);
-      
-      // If viewing a specific supplier, refresh their invoices
-      if (selectedSupplier) {
-        const invoicesRes = await fetch(
-          `http://localhost:8080/api/v1/admin/purchase-invoices?supplier_id=${selectedSupplier.id}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }
-        );
+      if (response.success) {
+        // Refresh data
+        const [suppliersRes, productsRes] = await Promise.all([
+          adminApi.getSuppliers(),
+          adminApi.getInventory()
+        ]);
         
-        if (invoicesRes.ok) {
-          const invoicesData = await invoicesRes.json();
-          setInvoices(invoicesData.data || []);
+        if (suppliersRes.success) {
+          setSuppliers(suppliersRes.data || []);
+        } else {
+          throw new Error(suppliersRes.message || 'فشل في تحميل بيانات الموردين');
         }
+        
+        if (productsRes.success) {
+          setProducts(productsRes.data || []);
+        } else {
+          throw new Error(productsRes.message || 'فشل في تحميل المنتجات');
+        }
+        
+        // If viewing a specific supplier, refresh their invoices
+        if (selectedSupplier) {
+          const invoicesRes = await adminApi.getPurchaseInvoices({ supplier_id: selectedSupplier.id });
+          if (invoicesRes.success) {
+            setInvoices(invoicesRes.data || []);
+          } else {
+            throw new Error(invoicesRes.message || 'فشل في تحميل فواتير المشتريات');
+          }
+        }
+        
+        toast.success('تم حفظ الفاتورة بنجاح');
+        return true;
+      } else {
+        throw new Error(response.message || 'فشل في حفظ الفاتورة');
       }
-      
-      toast.success('تم حفظ الفاتورة بنجاح');
-      return true;
     } catch (error) {
       toast.error(error.message);
       return false;
@@ -159,40 +139,34 @@ const SupplierBalancesPage = () => {
     }
     
     try {
-      const token = getToken();
-      const response = await fetch(`http://localhost:8080/api/v1/admin/purchase-invoices/${invoiceId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
+      const response = await adminApi.deletePurchaseInvoice(invoiceId);
+      
+      if (response.success) {
+        // Refresh data
+        const [suppliersRes, invoicesRes] = await Promise.all([
+          adminApi.getSuppliers(),
+          adminApi.getPurchaseInvoices({ supplier_id: selectedSupplier.id })
+        ]);
+        
+        if (suppliersRes.success) {
+          setSuppliers(suppliersRes.data || []);
+        } else {
+          throw new Error(suppliersRes.message || 'فشل في تحميل بيانات الموردين');
         }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'فشل في حذف الفاتورة');
+        
+        if (invoicesRes.success) {
+          setInvoices(invoicesRes.data || []);
+        } else {
+          throw new Error(invoicesRes.message || 'فشل في تحميل فواتير المشتريات');
+        }
+        
+        toast.success('تم حذف الفاتورة بنجاح');
+      } else {
+        throw new Error(response.message || 'فشل في حذف الفاتورة');
       }
-      
-      // Refresh data
-      const [suppliersRes, invoicesRes] = await Promise.all([
-        fetch('http://localhost:8080/api/v1/suppliers', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }),
-        fetch(`http://localhost:8080/api/v1/admin/purchase-invoices?supplier_id=${selectedSupplier.id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-      ]);
-      
-      const [updatedSuppliers, invoicesData] = await Promise.all([
-        suppliersRes.json(),
-        invoicesRes.json()
-      ]);
-      
-      setSuppliers(updatedSuppliers);
-      setInvoices(invoicesData.data || []);
-      
-      toast.success('تم حذف الفاتورة بنجاح');
     } catch (error) {
-      toast.error(error.message);
+      console.error('Error deleting invoice:', error);
+      toast.error(error.message || 'حدث خطأ أثناء حذف الفاتورة');
     }
   };
   

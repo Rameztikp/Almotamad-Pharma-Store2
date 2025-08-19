@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # قاعدة البيانات PostgreSQL
@@ -33,6 +33,7 @@ services:
       DB_NAME: pharmacy_db
       DB_SSLMODE: disable
       JWT_SECRET: your-secret-key-change-this-in-production
+      JWT_REFRESH_SECRET: your-refresh-secret-key-change-this-in-production
       PORT: 8080
       GIN_MODE: release
     ports:
@@ -67,4 +68,3 @@ volumes:
 networks:
   pharmacy_network:
     driver: bridge
-

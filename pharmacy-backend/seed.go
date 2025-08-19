@@ -30,6 +30,9 @@ func seed() {
 	// Connect to the database
 	config.ConnectDatabase()
 
+	// Seed admin user first
+	seedAdmin()
+
 	// Get the database connection
 	db := config.DB
 

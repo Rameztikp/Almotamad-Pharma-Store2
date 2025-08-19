@@ -3,6 +3,7 @@ package models
 import (
 	"strings"
 	"time"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -29,6 +30,7 @@ type User struct {
 	PasswordHash    string      `json:"-" gorm:"not null"`
 	FullName        string      `json:"full_name" gorm:"not null"`
 	Phone           string      `json:"phone" gorm:"not null"`
+	DateOfBirth     *time.Time  `json:"date_of_birth,omitempty" gorm:"type:date"`
 	AccountType     AccountType `json:"account_type" gorm:"type:varchar(20);default:'retail'"`
 	Role            UserRole    `json:"role" gorm:"type:varchar(20);default:'customer'"`
 	IsActive        bool        `json:"is_active" gorm:"default:false"`
@@ -39,6 +41,7 @@ type User struct {
 	LastLoginAt     *time.Time  `json:"last_login_at"`
 	
 	// Wholesale specific fields
+	WholesaleAccess     bool   `json:"wholesale_access" gorm:"default:false"` // صلاحية الوصول للجملة
 	CompanyName         string `json:"company_name,omitempty"`
 	CommercialRegister  string `json:"commercial_register,omitempty"`
 	IDDocumentURL       string `json:"id_document_url,omitempty"`

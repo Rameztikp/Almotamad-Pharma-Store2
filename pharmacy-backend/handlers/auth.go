@@ -3,12 +3,11 @@ package handlers
 import (
 	"net/http"
 	"pharmacy-backend/config"
-	"pharmacy-backend/middleware"
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
 	"regexp"
 	"time"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -29,17 +28,13 @@ func ConflictResponse(c *gin.Context, message string, details interface{}) {
 	})
 }
 
-// RegisterRequest بنية طلب التسجيل
+// RegisterRequest بنية ططلب التسجيل
 type RegisterRequest struct {
-	Email           string `json:"email" binding:"required,email"`
-	Password        string `json:"password" binding:"required,min=6"`
-	FullName        string `json:"full_name" binding:"required"`
-	Phone           string `json:"phone" binding:"required"`
-	AccountType     string `json:"account_type" binding:"required,oneof=retail wholesale"`
-	
-	// Wholesale specific fields
-	CompanyName        string `json:"company_name,omitempty"`
-	CommercialRegister string `json:"commercial_register,omitempty"`
+	Email       string  `json:"email" binding:"required,email"`
+	Password    string  `json:"password" binding:"required,min=6"`
+	FullName    string  `json:"full_name" binding:"required"`
+	Phone       string  `json:"phone" binding:"required"`
+	DateOfBirth string  `json:"date_of_birth" binding:"required"`
 }
 
 // LoginRequest بنية طلب تسجيل الدخول
@@ -89,7 +84,10 @@ func Register(c *gin.Context) {
 	var existingUser models.User
 	if err := tx.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		tx.Rollback()
-		ConflictResponse(c, "البريد الإلكتروني مسجل مسبقاً", "الرجاء استخدام بريد إلكتروني آخر")
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "البريد الإلكتروني مستخدم من قبل",
+		})
 		return
 	}
 	
@@ -100,62 +98,73 @@ func Register(c *gin.Context) {
 		utils.InternalServerErrorResponse(c, "خطأ في تشفير كلمة المرور", err.Error())
 		return
 	}
-	
-	// Validate wholesale account requirements
-	if req.AccountType == "wholesale" {
-		if req.CompanyName == "" || req.CommercialRegister == "" {
-			tx.Rollback()
-			utils.BadRequestResponse(c, "خطأ", "يجب إدخال اسم الشركة ورقم السجل التجاري لحساب الجملة")
-			return
-		}
+
+	// Parse date of birth
+	dateOfBirth, err := time.Parse("2006-01-02", req.DateOfBirth)
+	if err != nil {
+		tx.Rollback()
+		utils.BadRequestResponse(c, "خطأ", "تنسيق تاريخ الميلاد غير صالح. استخدم الصيغة YYYY-MM-DD")
+		return
 	}
 
-	// Create new user
-	isActive := true
-	if req.AccountType == "wholesale" {
-		isActive = false // Wholesale accounts need admin approval
-	}
-
+	// Create new user (default to retail account)
 	user := models.User{
 		ID:              uuid.New(),
 		Email:           req.Email,
 		PasswordHash:    hashedPassword,
 		FullName:        req.FullName,
 		Phone:           req.Phone,
-		AccountType:     models.AccountType(req.AccountType),
-		Role:            models.RoleCustomer,
-		IsActive:        isActive,
+		DateOfBirth:     &dateOfBirth,
+		AccountType:     "retail", // Default to retail account
+		Role:            "customer",
+		IsActive:        true,     // Retail accounts are active by default
 		EmailVerified:   false,
 		PhoneVerified:   false,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
-
-	// Set wholesale specific fields
-	if req.AccountType == "wholesale" {
-		user.CompanyName = req.CompanyName
-		user.CommercialRegister = req.CommercialRegister
-		// Note: File uploads (IDDocumentURL, CommercialDocumentURL) should be handled separately
-	}
 	
-	// حفظ المستخدم في قاعدة البيانات
+	// Save user to database
 	if err := tx.Create(&user).Error; err != nil {
 		tx.Rollback()
 		utils.InternalServerErrorResponse(c, "فشل في إنشاء الحساب", err.Error())
 		return
 	}
 	
-	// إنشاء JWT token
-	token, err := middleware.GenerateToken(&user)
+	// Generate access token و refresh token
+	accessToken, refreshToken, err := utils.GenerateTokens(user.ID, user.Email, string(user.Role))
 	if err != nil {
 		tx.Rollback()
 		utils.InternalServerErrorResponse(c, "فشل في إنشاء رمز الدخول", err.Error())
 		return
 	}
 	
-	// إخفاء كلمة المرور في الاستجابة
+	// Hide password in response
 	user.PasswordHash = ""
 	
+	// Set tokens in HttpOnly cookies (client scope)
+	accessCookie := &http.Cookie{
+		Name:     "client_access_token",
+		Value:    accessToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   gin.Mode() == gin.ReleaseMode,
+		SameSite: http.SameSiteStrictMode,
+		// Access token typically short-lived (e.g., 15m). Let it be session cookie by default.
+	}
+	http.SetCookie(c.Writer, accessCookie)
+
+	refreshCookie := &http.Cookie{
+		Name:     "client_refresh_token",
+		Value:    refreshToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   gin.Mode() == gin.ReleaseMode,
+		SameSite: http.SameSiteStrictMode,
+		// Set a longer max-age for refresh tokens if desired (e.g., 30 days). Optional here.
+	}
+	http.SetCookie(c.Writer, refreshCookie)
+
 	// Commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
@@ -163,10 +172,9 @@ func Register(c *gin.Context) {
 		return
 	}
 	
-	// إرجاع الاستجابة الناجحة
-	utils.CreatedResponse(c, "تم إنشاء الحساب بنجاح", AuthResponse{
-		Token: token,
-		User:  user,
+	// Return success response without exposing tokens in JSON
+	utils.CreatedResponse(c, "تم إنشاء الحساب بنجاح", gin.H{
+		"user": user,
 	})
 }
 
@@ -195,19 +203,39 @@ func Login(c *gin.Context) {
 		return
 	}
 	
-	// إنشاء JWT token
-	token, err := middleware.GenerateToken(&user)
+	// إنشاء access token و refresh token
+	accessToken, refreshToken, err := utils.GenerateTokens(user.ID, user.Email, string(user.Role))
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to generate token", err.Error())
+		utils.InternalServerErrorResponse(c, "Failed to generate tokens", err.Error())
 		return
 	}
 	
 	// إخفاء كلمة المرور في الاستجابة
 	user.PasswordHash = ""
 	
-	utils.SuccessResponse(c, "Login successful", AuthResponse{
-		Token: token,
-		User:  user,
+	// Set tokens in HttpOnly cookies (client scope)
+	accessCookie := &http.Cookie{
+		Name:     "client_access_token",
+		Value:    accessToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   gin.Mode() == gin.ReleaseMode,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(c.Writer, accessCookie)
+
+	refreshCookie := &http.Cookie{
+		Name:     "client_refresh_token",
+		Value:    refreshToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   gin.Mode() == gin.ReleaseMode,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(c.Writer, refreshCookie)
+
+	utils.SuccessResponse(c, "Login successful", gin.H{
+		"user": user,
 	})
 }
 
@@ -227,8 +255,9 @@ func GetProfile(c *gin.Context) {
 
 // UpdateProfileRequest بنية طلب تحديث الملف الشخصي
 type UpdateProfileRequest struct {
-	FullName string `json:"full_name"`
-	Phone    string `json:"phone"`
+	FullName    string     `json:"full_name"`
+	Phone       string     `json:"phone"`
+	DateOfBirth *time.Time `json:"date_of_birth,omitempty"`
 }
 
 // UpdateProfile تحديث ملف المستخدم
@@ -250,6 +279,7 @@ func UpdateProfile(c *gin.Context) {
 	// تحديث البيانات
 	userObj.FullName = req.FullName
 	userObj.Phone = req.Phone
+	userObj.DateOfBirth = req.DateOfBirth
 	userObj.UpdatedAt = time.Now()
 	
 	if err := config.DB.Save(userObj).Error; err != nil {
@@ -306,8 +336,189 @@ func ChangePassword(c *gin.Context) {
 	utils.SuccessResponse(c, "Password changed successfully", nil)
 }
 
-// Logout تسجيل الخروج (في الواقع، يتم التعامل مع هذا في الواجهة الأمامية)
+// Logout تسجيل الخروج (يمسح ملفات تعريف الارتباط الخاصة بالجلسة)
 func Logout(c *gin.Context) {
-	utils.SuccessResponse(c, "Logout successful", nil)
+    // Expire both client and admin cookies
+    // 1) Clear client cookies on '/'
+    clientNames := []string{
+        "client_access_token",
+        "client_refresh_token",
+    }
+    for _, name := range clientNames {
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     name,
+            Value:    "",
+            Path:     "/",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteStrictMode,
+            MaxAge:   -1,
+        })
+    }
+
+    // 2) Clear legacy admin cookies that might have been set on '/'
+    legacyAdminNames := []string{
+        "admin_access_token",
+        "admin_refresh_token",
+    }
+    for _, name := range legacyAdminNames {
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     name,
+            Value:    "",
+            Path:     "/",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            // legacy cookies might have been Strict; MaxAge -1 will expire regardless
+            SameSite: http.SameSiteStrictMode,
+            MaxAge:   -1,
+        })
+    }
+
+    // 3) Clear current scoped admin cookies on '/api/v1/admin' with SameSite=None
+    for _, name := range legacyAdminNames {
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     name,
+            Value:    "",
+            Path:     "/api/v1/admin",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteNoneMode,
+            MaxAge:   -1,
+        })
+    }
+
+    utils.SuccessResponse(c, "Logout successful", nil)
 }
 
+// RefreshTokenRequest بنية طلب تحديث التوكن
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// RefreshTokenResponse بنية استجابة تحديث التوكن
+type RefreshTokenResponse struct {
+	AccessToken  string      `json:"access_token"`
+	RefreshToken string      `json:"refresh_token"`
+	User         models.User `json:"user"`
+}
+
+// RefreshToken تحديث التوكن باستخدام refresh token
+func RefreshToken(c *gin.Context) {
+    // Try to read refresh token from cookies first (client or admin), fallback to JSON body
+    var tokenFromCookie string
+    if v, err := c.Cookie("client_refresh_token"); err == nil && v != "" {
+        tokenFromCookie = v
+    }
+    if tokenFromCookie == "" {
+        if v, err := c.Cookie("admin_refresh_token"); err == nil && v != "" {
+            tokenFromCookie = v
+        }
+    }
+
+    var provided string
+    if tokenFromCookie != "" {
+        provided = tokenFromCookie
+    } else {
+        var req RefreshTokenRequest
+        if err := c.ShouldBindJSON(&req); err != nil || req.RefreshToken == "" {
+            utils.BadRequestResponse(c, "بيانات الطلب غير صالحة", "refresh token مفقود")
+            return
+        }
+        provided = req.RefreshToken
+    }
+
+    // التحقق من صحة refresh token
+    claims, err := utils.VerifyRefreshToken(provided)
+    if err != nil {
+        utils.UnauthorizedResponse(c, "Refresh token غير صالح")
+        return
+    }
+
+	// الحصول على معرف المستخدم من التوكن
+	userIDStr, ok := claims["user_id"].(string)
+	if !ok {
+		utils.UnauthorizedResponse(c, "معرف المستخدم غير صالح في التوكن")
+		return
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		utils.UnauthorizedResponse(c, "معرف المستخدم غير صالح")
+		return
+	}
+
+	// التحقق من وجود المستخدم في قاعدة البيانات
+	var user models.User
+	if err := config.DB.Where("id = ? AND is_active = ?", userID, true).First(&user).Error; err != nil {
+		utils.UnauthorizedResponse(c, "المستخدم غير موجود أو غير نشط")
+		return
+	}
+
+	    // إنشاء توكن وصول جديد
+    accessToken, err := utils.GenerateJWT(user.ID, user.Email, string(user.Role))
+    if err != nil {
+        utils.InternalServerErrorResponse(c, "فشل في إنشاء توكن الوصول", err.Error())
+        return
+    }
+
+	    // إنشاء refresh token جديد
+    refreshToken, err := utils.GenerateRefreshToken(user.ID, user.Email, string(user.Role))
+    if err != nil {
+        utils.InternalServerErrorResponse(c, "فشل في إنشاء refresh token", err.Error())
+        return
+    }
+
+	// إخفاء كلمة المرور في الاستجابة
+	user.PasswordHash = ""
+
+    // Update cookies depending on which cookie space provided token
+    // default to client cookies on '/'
+    isAdmin := false
+    if tokenFromCookie != "" {
+        if _, err := c.Cookie("admin_refresh_token"); err == nil {
+            isAdmin = true
+        }
+    }
+
+    if isAdmin {
+        // Admin cookies: scoped to /api/v1/admin and SameSite=None
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     "admin_access_token",
+            Value:    accessToken,
+            Path:     "/api/v1/admin",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteNoneMode,
+        })
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     "admin_refresh_token",
+            Value:    refreshToken,
+            Path:     "/api/v1/admin",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteNoneMode,
+        })
+    } else {
+        // Client cookies: keep on '/' with Strict
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     "client_access_token",
+            Value:    accessToken,
+            Path:     "/",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteStrictMode,
+        })
+        http.SetCookie(c.Writer, &http.Cookie{
+            Name:     "client_refresh_token",
+            Value:    refreshToken,
+            Path:     "/",
+            HttpOnly: true,
+            Secure:   gin.Mode() == gin.ReleaseMode,
+            SameSite: http.SameSiteStrictMode,
+        })
+    }
+
+    utils.SuccessResponse(c, "تم تحديث التوكن بنجاح", RefreshTokenResponse{
+        User: user,
+    })
+}

@@ -18,40 +18,79 @@ func GetAllOrders(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	status := c.Query("status")
-	
+	orderType := c.Query("order_type") // retail | wholesale (اختياري)
+
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	
+
 	offset := (page - 1) * limit
-	
-	query := config.DB.Model(&models.Order{}).
-		Preload("User").
-		Preload("OrderItems.Product").
-		Preload("OrderTracking")
-	
+
+	// Build a base query for IDs to avoid DISTINCT with joined preloads
+	baseIDsQuery := config.DB.Model(&models.Order{})
 	if status != "" {
-		query = query.Where("status = ?", status)
+		baseIDsQuery = baseIDsQuery.Where("status = ?", status)
 	}
-	
+	if orderType == string(models.ProductTypeRetail) || orderType == string(models.ProductTypeWholesale) {
+		baseIDsQuery = baseIDsQuery.
+			Joins("JOIN order_items oi ON oi.order_id = orders.id").
+			Joins("JOIN products p ON p.id = oi.product_id").
+			Where("p.\"type\" = ?", orderType)
+	}
+
+	// Count distinct order IDs (total)
 	var total int64
-	query.Count(&total)
-	
-	var orders []models.Order
-	err := query.
-		Order("created_at DESC").
+	countDB := config.DB.Model(&models.Order{})
+	if status != "" {
+		countDB = countDB.Where("status = ?", status)
+	}
+	if orderType == string(models.ProductTypeRetail) || orderType == string(models.ProductTypeWholesale) {
+		countDB = countDB.
+			Joins("JOIN order_items oi ON oi.order_id = orders.id").
+			Joins("JOIN products p ON p.id = oi.product_id").
+			Where("p.\"type\" = ?", orderType)
+	}
+	if err := countDB.Select("orders.id").Distinct("orders.id").Count(&total).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to count orders", err.Error())
+		return
+	}
+
+	// Page through IDs using GROUP BY to avoid DISTINCT+ORDER BY issue in Postgres
+	var orderIDs []uuid.UUID
+	if err := baseIDsQuery.
+		Select("orders.id").
+		Group("orders.id").
+		Order("MAX(orders.created_at) DESC").
 		Limit(limit).
 		Offset(offset).
-		Find(&orders).Error
-	
-	if err != nil {
+		Pluck("orders.id", &orderIDs).Error; err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to fetch orders", err.Error())
 		return
 	}
-	
+
+	// Short-circuit if no results for this page
+	if len(orderIDs) == 0 {
+		pagination := utils.CalculatePagination(page, limit, total)
+		utils.PaginatedSuccessResponse(c, "Orders retrieved successfully", []models.Order{}, pagination)
+		return
+	}
+
+	// Now load full orders with preloads for the selected IDs
+	var orders []models.Order
+	if err := config.DB.Model(&models.Order{}).
+		Preload("User").
+		Preload("OrderItems.Product").
+		Preload("OrderTracking").
+		Where("orders.id IN ?", orderIDs).
+		Order("orders.created_at DESC").
+		Find(&orders).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to fetch orders", err.Error())
+		return
+	}
+
 	pagination := utils.CalculatePagination(page, limit, total)
 	utils.PaginatedSuccessResponse(c, "Orders retrieved successfully", orders, pagination)
 }
@@ -104,6 +143,13 @@ func UpdateOrderStatus(c *gin.Context) {
 		utils.InternalServerErrorResponse(c, "Failed to add order tracking", err.Error())
 		return
 	}
+
+	// بث إشعار تغيير حالة الطلب للمستخدم عبر SSE
+	Notifier.BroadcastToUser(order.UserID, "order_status_updated", gin.H{
+		"order_id":   order.ID.String(),
+		"new_status": order.Status,
+		"updated_at": time.Now(),
+	})
 	
 	utils.SuccessResponse(c, "Order status updated successfully", order)
 }

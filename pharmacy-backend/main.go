@@ -3,14 +3,15 @@ package main
 import (
 	"log"
 	"os"
-	"pharmacy-backend/config"
-	"pharmacy-backend/handlers"
-	"pharmacy-backend/middleware"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"pharmacy-backend/config"
+	"pharmacy-backend/handlers"
+	"pharmacy-backend/middleware"
 )
 
 func main() {
@@ -25,12 +26,12 @@ func main() {
 
 	// الاتصال بقاعدة البيانات
 	config.ConnectDatabase()
-	
-	// تشغيل الهجرة التلقائية لإنشاء الجداول
-	err = config.AutoMigrate()
-	if err != nil {
-		log.Fatalf("❌ فشل في تشغيل الهجرة التلقائية: %v", err)
+
+	// Create uploads directory if it doesn't exist
+	if err := os.MkdirAll("uploads", 0755); err != nil {
+		log.Fatalf("❌ Failed to create uploads directory: %v", err)
 	}
+
 
 	// تحديد وضع التشغيل (debug أو release)
 	ginMode := getEnv("GIN_MODE", "debug")
@@ -62,25 +63,47 @@ func main() {
 		c.Status(204)
 	})
 
+	// Serve static files from uploads directory
+	r.Static("/uploads", "./uploads")
+
+	// Health check endpoint
+	r.GET("/health", handlers.HealthCheck)
+
 	// Group routes with version and API prefix
 	api := r.Group("/api/v1")
 	{
+		// Notifications (SSE stream)
+		api.GET("/notifications/stream", handlers.NotificationsStream)
+
 		// Authentication routes
 		auth := api.Group("/auth")
 		{
+			// User authentication endpoints
 			auth.POST("/register", handlers.Register)
 			auth.POST("/login", handlers.Login)
+			auth.POST("/refresh-token", handlers.RefreshToken)
 			auth.GET("/profile", middleware.JWTAuth(), handlers.GetProfile)
+			auth.GET("/me", middleware.JWTAuth(), handlers.GetProfile) // إضافة مسار /me
 			auth.PUT("/profile", middleware.JWTAuth(), handlers.UpdateProfile)
 			auth.PUT("/change-password", middleware.JWTAuth(), handlers.ChangePassword)
 			auth.POST("/logout", middleware.JWTAuth(), handlers.Logout)
 
-			// Admin authentication
+			// Admin authentication endpoints
+			// POST /api/v1/auth/admin/login
 			auth.POST("/admin/login", handlers.AdminLogin)
 			auth.GET("/admin/profile", middleware.JWTAuth(), middleware.AdminOnly(), handlers.GetAdminProfile)
 		}
 
 
+
+		// Wholesale routes
+		wholesale := api.Group("/wholesale")
+		{
+			// POST /api/v1/wholesale/requests - Submit a new wholesale upgrade request
+			wholesale.POST("/requests", middleware.JWTAuth(), handlers.UpgradeToWholesale)
+			// GET /api/v1/wholesale/requests - Get current user's wholesale request
+			wholesale.GET("/requests", middleware.JWTAuth(), handlers.GetUserWholesaleRequest)
+		}
 
 		// Public products routes
 		products := api.Group("/products")
@@ -103,30 +126,36 @@ func main() {
 
 		// سلة التسوق
 		cart := api.Group("/cart")
-		cart.Use(middleware.AuthMiddleware())
+		cart.Use(middleware.JWTAuth())
 		{
 			cart.GET("/", handlers.GetCart)
+			cart.GET("", handlers.GetCart)
 			cart.POST("/items", handlers.AddToCart)
 			cart.PUT("/items/:id", handlers.UpdateCartItem)
 			cart.DELETE("/items/:id", handlers.RemoveFromCart)
 			cart.DELETE("/", handlers.ClearCart)
+			cart.DELETE("", handlers.ClearCart)
 		}
 
 		// المفضلة
 		favorites := api.Group("/favorites")
-		favorites.Use(middleware.AuthMiddleware())
+		favorites.Use(middleware.JWTAuth())
 		{
 			favorites.GET("/", handlers.GetFavorites)
+			favorites.GET("", handlers.GetFavorites)
 			favorites.POST("/", handlers.AddToFavorites)
+			favorites.POST("", handlers.AddToFavorites)
 			favorites.DELETE("/:product_id", handlers.RemoveFromFavorites)
 		}
 
 		// الطلبات
 		orders := api.Group("/orders")
-		orders.Use(middleware.AuthMiddleware())
+		orders.Use(middleware.JWTAuth())
 		{
 			orders.POST("/", handlers.CreateOrder)
+			orders.POST("", handlers.CreateOrder)
 			orders.GET("/", handlers.GetUserOrders)
+			orders.GET("", handlers.GetUserOrders)
 			orders.GET("/:id", handlers.GetOrder)
 			orders.POST("/:id/cancel", handlers.CancelOrder)
 		}
@@ -134,15 +163,32 @@ func main() {
 		// تتبع الطلب
 		api.GET("/orders/:id/tracking", handlers.TrackOrder)
 
+
+
 		// لوحة تحكم الإدارة
 		adminGroup := api.Group("/admin")
-		adminGroup.Use(middleware.AuthMiddleware(), middleware.AdminMiddleware())
+		adminGroup.Use(middleware.JWTAuth(), middleware.AdminOnly())
 		{
-			adminGroup.POST("/products", handlers.CreateProduct)
-			adminGroup.PUT("/products/:id", handlers.UpdateProduct)
-			adminGroup.DELETE("/products/:id", handlers.DeleteProduct)
-			adminGroup.GET("/products/low-stock", handlers.GetLowStockProducts)
-			adminGroup.GET("/products/expiring", handlers.GetExpiringProducts)
+			// Product management routes
+			adminProducts := adminGroup.Group("/products")
+			{
+				adminProducts.GET("", handlers.GetAdminProducts)
+				adminProducts.POST("", handlers.CreateProduct)
+				adminProducts.PUT("/:id", handlers.UpdateProduct)
+				adminProducts.DELETE("/:id", handlers.DeleteProduct)
+				
+				// Publish/Unpublish product with permission check
+				publishGroup := adminProducts.Group("")
+				publishGroup.Use(middleware.CheckProductPublishPermission())
+				{
+					// Unified endpoint for both publish and unpublish actions
+					publishGroup.PATCH("/:id/status", handlers.UpdateProductStatus)
+				}
+				
+				// Other product-related endpoints
+				adminProducts.GET("/low-stock", handlers.GetLowStockProducts)
+				adminProducts.GET("/expiring", handlers.GetExpiringProducts)
+			}
 
 			adminGroup.POST("/categories", handlers.CreateCategory)
 			adminGroup.PUT("/categories/:id", handlers.UpdateCategory)
@@ -152,8 +198,11 @@ func main() {
 			adminGroup.PUT("/orders/:id/status", handlers.UpdateOrderStatus)
 			adminGroup.POST("/orders/:id/tracking", handlers.AddOrderTracking)
 
+			// Dashboard and Activities routes (already defined below in the file)
+			// Users routes
 			adminUsers := adminGroup.Group("/users")
-			adminUsers.Use(middleware.SuperAdminMiddleware())
+			// تم تطبيق AdminOnly بالفعل على المستوى الأعلى
+			// adminUsers.Use(middleware.AdminOnly())
 			{
 				adminUsers.GET("/", handlers.GetAllUsers)
 				adminUsers.GET("/:id", handlers.GetUserByID)
@@ -185,6 +234,9 @@ func main() {
 				settings.PUT("/payment-gateways/:id", handlers.UpdatePaymentGateway)
 			}
 
+			// Uploads
+			adminGroup.POST("/uploads", handlers.UploadImages)
+
 			// Coupons
 			adminGroup.POST("/coupons", handlers.CreateCoupon)
 			adminGroup.PUT("/coupons/:id", handlers.UpdateCoupon)
@@ -192,16 +244,18 @@ func main() {
 			adminGroup.GET("/coupons", handlers.GetCoupons)
 			adminGroup.GET("/coupons/:id", handlers.GetCouponByID)
 
-			// Purchase Invoices
-			purchaseInvoices := adminGroup.Group("/purchase-invoices")
+			// Wholesale Admin Routes - تأكد من تطبيق middleware بشكل صحيح
+			wholesaleAdmin := adminGroup.Group("/wholesale-requests")
 			{
-				purchaseInvoices.POST("", handlers.CreatePurchaseInvoice(config.DB))
-				purchaseInvoices.GET("", handlers.GetPurchaseInvoices(config.DB))
-				purchaseInvoices.GET("/:id", handlers.GetPurchaseInvoice(config.DB))
-				purchaseInvoices.DELETE("/:id", handlers.DeletePurchaseInvoice(config.DB))
+				wholesaleAdmin.GET("", handlers.GetWholesaleRequests)
+				wholesaleAdmin.PUT("/:id/status", handlers.UpdateRequestStatus)
 			}
+			
+			// Wholesale Customers Routes
+			adminGroup.GET("/wholesale-customers", handlers.GetWholesaleCustomers)
 		}
 
+		// Coupons
 		api.POST("/coupons/validate", handlers.ValidateCoupon)
 	}
 
@@ -212,7 +266,8 @@ func main() {
 }
 
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
+	value := os.Getenv(key)
+	if value != "" {
 		return value
 	}
 	return defaultValue

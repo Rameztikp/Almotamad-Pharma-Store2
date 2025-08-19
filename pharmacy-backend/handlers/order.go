@@ -1,128 +1,131 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
-	"pharmacy-backend/config"
-	"pharmacy-backend/models"
-	"pharmacy-backend/utils"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"pharmacy-backend/config"
+	"pharmacy-backend/models"
+	"pharmacy-backend/utils"
 )
 
-// CreateOrderRequest بنية طلب إنشاء الطلب
-type CreateOrderRequest struct {
-	PaymentMethod   string          `json:"payment_method" binding:"required"`
-	ShippingAddress models.Address  `json:"shipping_address" binding:"required"`
-	BillingAddress  *models.Address `json:"billing_address,omitempty"`
-	Notes           string          `json:"notes,omitempty"`
-	CouponCode      string          `json:"coupon_code,omitempty"`
+// OrderItemRequest عنصر الطلب - يدعم الحقول الحديثة والقديمة
+type OrderItemRequest struct {
+	ProductID     string          `json:"product_id"`
+	Product       json.RawMessage `json:"product"` // للتوافق مع الواجهة القديمة: قد يكون نص UUID أو كائن يحتوي id/product_id
+	Name          string          `json:"name"`
+	Quantity      int             `json:"quantity"`
+	Price         float64         `json:"price"`
+}
+
+// OrderRequest هيكل الطلب الوارد من الواجهة الأمامية
+type OrderRequest struct {
+	Items           []OrderItemRequest `json:"items"`
+	Subtotal        float64            `json:"subtotal"`
+	Shipping        float64            `json:"shipping"`
+	Total           float64            `json:"total"`
+	Notes           string             `json:"notes"`
+	CouponCode      string             `json:"coupon_code"`
+	PaymentMethod   string             `json:"payment_method"`
+	ShippingAddress models.Address     `json:"shipping_address"`
+	BillingAddress  *models.Address    `json:"billing_address"`
 }
 
 // CreateOrder إنشاء طلب جديد
 func CreateOrder(c *gin.Context) {
-	log.Println("Starting order creation process...")
-	
-	userID, exists := c.Get("user_id")
+	// التحقق من المصادقة
+	userIDVal, exists := c.Get("user_id")
 	if !exists {
-		errMsg := "User not authenticated"
-		log.Println("❌", errMsg)
-		utils.UnauthorizedResponse(c, errMsg)
+		utils.UnauthorizedResponse(c, "User not authenticated")
 		return
 	}
-	
-	userUUID, err := uuid.Parse(userID.(string))
-	if err != nil {
-		errMsg := "Invalid user ID format"
-		log.Println("❌", errMsg, "error:", err)
-		utils.BadRequestResponse(c, errMsg, err.Error())
-		return
-	}
-	
-	log.Printf("Creating order for user ID: %v\n", userID)
-	
-	var req CreateOrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		errMsg := fmt.Sprintf("Invalid request data: %v", err.Error())
-		log.Println("❌", errMsg)
-		utils.BadRequestResponse(c, "Invalid request data", err.Error())
-		return
-	}
-	log.Printf("Order request received: Payment Method: %s, Notes: %s, Coupon: %s\n", 
-		req.PaymentMethod, req.Notes, req.CouponCode)
-	
-	// الحصول على عناصر السلة
-	var cartItems []models.CartItem
-	if err := config.DB.
-		Preload("Product").
-		Where("user_id = ?", userID).Find(&cartItems).Error; err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch cart items", err.Error())
-		return
-	}
-	
-	if len(cartItems) == 0 {
-		utils.BadRequestResponse(c, "Cart is empty", "")
-		return
-	}
-	
-	// حساب المجموع الفرعي
-	var subtotal float64
-	for _, item := range cartItems {
-		subtotal += item.GetTotalPrice()
-	}
-	
-	// حساب الشحن والضرائب
-	shippingCost := 10.0 // تكلفة شحن افتراضية
-	if subtotal >= 100 {
-		shippingCost = 0.0 // شحن مجاني للطلبات فوق 100
-	}
-	taxRate := 0.15     // 15% ضريبة
-	taxAmount := subtotal * taxRate
 
-	// تطبيق خصم الكوبون إذا كان متوفراً
-	discountAmount := 0.0
-	if req.CouponCode != "" {
-		var coupon models.Coupon
-		if err := config.DB.Where("code = ?", req.CouponCode).First(&coupon).Error; err == nil {
-			if coupon.IsValid() {
-				discountAmount = coupon.CalculateDiscount(subtotal)
-				
-				// تحديث عدد مرات استخدام الكوبون
-				coupon.UsedCount++
-				config.DB.Save(&coupon)
+	userIDStr := fmt.Sprintf("%v", userIDVal)
+	userUUID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		utils.BadRequestResponse(c, "Invalid user ID", err.Error())
+		return
+	}
+
+	// ربط جسم الطلب
+	var req OrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestResponse(c, "Invalid request payload", err.Error())
+		return
+	}
+
+	// تطبيع معرفات المنتجات ودعم الحقول القديمة
+	for i := range req.Items {
+		// تنظيف product_id إذا موجود
+		req.Items[i].ProductID = strings.TrimSpace(req.Items[i].ProductID)
+
+		// إذا غير موجود، نحاول استخراجه من الحقل القديم product
+		if req.Items[i].ProductID == "" && len(req.Items[i].Product) > 0 {
+			// قد يكون نص UUID
+			var asString string
+			if err := json.Unmarshal(req.Items[i].Product, &asString); err == nil && asString != "" {
+				req.Items[i].ProductID = strings.TrimSpace(asString)
+				log.Printf("ℹ️ Using legacy 'product' string for item %d\n", i)
+			} else {
+				// أو كائن JSON يحتوي id أو product_id
+				var legacyObj map[string]interface{}
+				if err := json.Unmarshal(req.Items[i].Product, &legacyObj); err == nil {
+					if v, ok := legacyObj["id"]; ok {
+						if s, ok2 := v.(string); ok2 {
+							req.Items[i].ProductID = strings.TrimSpace(s)
+							log.Printf("ℹ️ Using legacy 'product.id' for item %d\n", i)
+						}
+					}
+					if req.Items[i].ProductID == "" {
+						if v, ok := legacyObj["product_id"]; ok {
+							if s, ok2 := v.(string); ok2 {
+								req.Items[i].ProductID = strings.TrimSpace(s)
+								log.Printf("ℹ️ Using legacy 'product.product_id' for item %d\n", i)
+							}
+						}
+					}
+				}
 			}
 		}
+		// Log normalized input for this item
+		log.Printf("📝 Item %d normalized - product_id: '%s', price: %v, qty: %d, name: '%s'\n", i, req.Items[i].ProductID, req.Items[i].Price, req.Items[i].Quantity, req.Items[i].Name)
+		if req.Items[i].ProductID == "" {
+			errMsg := fmt.Sprintf("Missing product_id for item index %d", i)
+			log.Println("❌", errMsg)
+			utils.BadRequestResponse(c, "Invalid request data", errMsg)
+			return
+		}
 	}
-	
-	// حساب المبلغ الإجمالي
-	totalAmount := subtotal + shippingCost + taxAmount - discountAmount
-	
-	// إنشاء الطلب مع نسخ عنوان الشحن
-	shippingAddr := req.ShippingAddress // إنشاء نسخة من عنوان الشحن
+
+	log.Printf("Order request received: Payment Method: %s, Notes: %s, Coupon: %s\n", req.PaymentMethod, req.Notes, req.CouponCode)
+
+	// إنشاء الطلب مع البيانات الواردة من الطلب
 	order := models.Order{
 		UserID:          userUUID,
 		Status:          models.OrderStatusPending,
-		Subtotal:        subtotal,
-		ShippingCost:    shippingCost,
-		TaxAmount:       taxAmount,
-		DiscountAmount:  discountAmount,
-		TotalAmount:     totalAmount,
+		Subtotal:        req.Subtotal,
+		ShippingCost:    req.Shipping,
+		TaxAmount:       (req.Subtotal * 0.15), // 15% ضريبة
+		TotalAmount:     req.Total,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentStatus:   models.PaymentStatusPending,
-		ShippingAddress: shippingAddr,
+		ShippingAddress: req.ShippingAddress,
 		Notes:           req.Notes,
 	}
-	
-	// تعيين عنوان الفواتير إذا تم توفيره
+
+	// إضافة عنوان الفاتورة إذا تم توفيره
 	if req.BillingAddress != nil {
-		billingAddr := *req.BillingAddress // إنشاء نسخة من عنوان الفواتير
-		order.BillingAddress = &billingAddr
+		order.BillingAddress = req.BillingAddress
 	}
-	
+
 	// بدء معاملة قاعدة البيانات
 	tx := config.DB.Begin()
 	defer func() {
@@ -131,48 +134,91 @@ func CreateOrder(c *gin.Context) {
 		}
 	}()
 
-	// حفظ الطلب
+	// حفظ الطلب في قاعدة البيانات
 	if err := tx.Create(&order).Error; err != nil {
 		tx.Rollback()
-		log.Printf("❌ Failed to create order: %v\n", err)
+		log.Printf("❌ Order creation failed for user %s. Error: %v\n", userUUID, err)
 		utils.InternalServerErrorResponse(c, "Failed to create order", err.Error())
 		return
 	}
 
-	// حفظ عناصر الطلب
-	for _, item := range cartItems {
-			orderItem := models.OrderItem{
-			OrderID:    order.ID,
-			ProductID:  item.ProductID,
-			Name:       item.Product.Name,    // حفظ اسم المنتج
-			ImageURL:   item.Product.ImageURL, // حفظ صورة المنتج
-			Quantity:   item.Quantity,
-			UnitPrice:  item.Product.Price,
-			TotalPrice: item.Product.Price * float64(item.Quantity), // حساب السعر الإجمالي للعنصر
+	// إضافة عناصر الطلب
+	for idx, item := range req.Items {
+		// التحقق من صحة معرف المنتج
+		pid := strings.TrimSpace(item.ProductID)
+		// Fallback: إذا كان pid سلسلة JSON لكائن، نحاول استخراج id/product_id
+		if strings.HasPrefix(pid, "{") && strings.HasSuffix(pid, "}") {
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(pid), &obj); err == nil {
+				if v, ok := obj["id"].(string); ok && v != "" {
+					pid = strings.TrimSpace(v)
+					log.Printf("ℹ️ Extracted product_id from JSON string at item %d\n", idx)
+				} else if v, ok := obj["product_id"].(string); ok && v != "" {
+					pid = strings.TrimSpace(v)
+					log.Printf("ℹ️ Extracted product_id from JSON string (product_id) at item %d\n", idx)
+				}
+			}
 		}
-		
+		productID, err := uuid.Parse(pid)
+		if err != nil {
+			tx.Rollback()
+			log.Printf("❌ Invalid product ID format at item index %d: '%s'\n", idx, pid)
+			utils.BadRequestResponse(c, "Invalid product ID format", err.Error())
+			return
+		}
+
+		// التحقق من وجود المنتج
+		var product models.Product
+		if err := tx.First(&product, "id = ?", productID).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Product not found: %s\n", item.ProductID)
+			utils.BadRequestResponse(c, "Product not found", err.Error())
+			return
+		}
+
+		// التحقق من الكمية المتاحة
+		if product.StockQuantity < item.Quantity {
+			tx.Rollback()
+			log.Printf("❌ Insufficient quantity for product: %s (Requested: %d, Available: %d)\n", product.Name, item.Quantity, product.StockQuantity)
+			utils.BadRequestResponse(c, "Insufficient quantity for product", fmt.Sprintf("Requested: %d, Available: %d", item.Quantity, product.StockQuantity))
+			return
+		}
+
+		// إنشاء عنصر الطلب
+		orderItem := models.OrderItem{
+			OrderID:    order.ID,
+			ProductID:  productID,
+			Name:       item.Name,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.Price,
+			TotalPrice: item.Price * float64(item.Quantity),
+		}
+
 		if err := tx.Create(&orderItem).Error; err != nil {
 			tx.Rollback()
 			log.Printf("❌ Failed to create order item: %v\n", err)
 			utils.InternalServerErrorResponse(c, "Failed to create order items", err.Error())
 			return
 		}
-		
-		// تقليل الكمية المتوفرة من المنتج
-		if err := tx.Model(&item.Product).
-			Update("quantity", gorm.Expr("quantity - ?", item.Quantity)).
-			Error; err != nil {
-			log.Printf("⚠️ Failed to update product quantity: %v\n", err)
-			// لا نوقف العملية إذا فشل تحديث الكمية
+
+		// تحديث كمية المنتج المتاحة
+		if err := tx.Model(&product).Update("stock_quantity", gorm.Expr("stock_quantity - ?", item.Quantity)).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to update product quantity: %v\n", err)
+			utils.InternalServerErrorResponse(c, "Failed to update product quantity", err.Error())
+			return
 		}
 	}
 
-	// تفريغ سلة التسوق بعد إنشاء الطلب
-	if err := tx.Where("user_id = ?", userID).Delete(&models.CartItem{}).Error; err != nil {
-		tx.Rollback()
-		log.Printf("❌ Failed to clear cart: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to clear cart", err.Error())
-		return
+	// مسح سلة التسوق (إذا كانت هناك عناصر في السلة)
+	var cartItemCount int64
+	if err := tx.Model(&models.CartItem{}).Where("user_id = ?", userUUID).Count(&cartItemCount).Error; err == nil && cartItemCount > 0 {
+		if err := tx.Where("user_id = ?", userUUID).Delete(&models.CartItem{}).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to clear cart: %v\n", err)
+			// لا نوقف العملية إذا فشل حذف السلة، فقط نسجل الخطأ
+			log.Printf("⚠️ Warning: Failed to clear cart, but continuing with order creation")
+		}
 	}
 
 	// تأكيد المعاملة
@@ -185,15 +231,23 @@ func CreateOrder(c *gin.Context) {
 
 	// تسجيل نجاح إنشاء الطلب
 	log.Printf("✅ Order created successfully. ID: %s, Total: %.2f\n", order.ID, order.TotalAmount)
-	
+
+	// بث إشعار إنشاء الطلب للمستخدم عبر SSE
+	Notifier.BroadcastToUser(userUUID, "order_created", gin.H{
+		"order_id":     order.ID.String(),
+		"status":       order.Status,
+		"total_amount": order.TotalAmount,
+		"created_at":   order.CreatedAt,
+	})
+
 	// إرجاع استجابة ناجحة
 	utils.SuccessResponse(c, "تم إنشاء الطلب بنجاح", gin.H{
-		"id":            order.ID,
-		"order_number":  order.ID.String(),
-		"status":        order.Status,
-		"total_amount":  order.TotalAmount,
-		"created_at":    order.CreatedAt,
-		"items_count":   len(cartItems),
+		"id":           order.ID,
+		"order_number": order.ID.String(),
+		"status":       order.Status,
+		"total_amount": order.TotalAmount,
+		"created_at":   order.CreatedAt,
+		"items_count":  len(req.Items),
 	})
 }
 

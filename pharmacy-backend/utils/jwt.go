@@ -5,16 +5,22 @@ import (
 	"os"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
 )
+
+// مدة صلاحية توكن الوصول (24 ساعة)
+const AccessTokenExpiry = 24 * time.Hour
+
+// مدة صلاحية توكن التحديث (7 أيام)
+const RefreshTokenExpiry = 168 * time.Hour
 
 // JWTClaims هيكل البيانات المشفرة في التوكن
 type JWTClaims struct {
 	UserID   uuid.UUID   `json:"user_id"`
 	Email    string      `json:"email"`
 	Role     string      `json:"role"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 // GenerateJWT إنشاء توكن JWT جديد
@@ -33,8 +39,8 @@ func GenerateJWT(userID uuid.UUID, email string, role string) (string, error) {
 		UserID: userID,
 		Email:  email,
 		Role:   role,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			Issuer:    "pharmacy-backend",
 		},
 	}
@@ -95,6 +101,68 @@ func GetUserIDFromToken(tokenString string) (uuid.UUID, error) {
 	return userID, nil
 }
 
+// GenerateTokens إنشاء توكن وصول وتوكن تحديث جديدين
+func GenerateTokens(userID uuid.UUID, email string, role string) (string, string, error) {
+	// إنشاء توكن الوصول
+	accessToken, err := GenerateJWT(userID, email, role)
+	if err != nil {
+		return "", "", err
+	}
+
+	// إنشاء توكن التحديث (يستمر لمدة أطول)
+	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+	}
+
+	expirationTime := time.Now().Add(RefreshTokenExpiry)
+	claims := &JWTClaims{
+		UserID: userID,
+		Email:  email,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			Issuer:    "pharmacy-backend-refresh",
+		},
+	}
+
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	refreshTokenString, err := refreshToken.SignedString([]byte(jwtSecret))
+	if err != nil {
+		return "", "", err
+	}
+
+	return accessToken, refreshTokenString, nil
+}
+
+// RefreshAccessToken تحديث توكن الوصول باستخدام توكن التحديث
+func RefreshAccessToken(refreshTokenString string) (string, error) {
+	// التحقق من صحة توكن التحديث
+	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+	}
+
+	token, err := jwt.ParseWithClaims(refreshTokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("طريقة التوقيع غير صالحة")
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return "", errors.New("توكن التحديث غير صالح")
+	}
+
+	claims, ok := token.Claims.(*JWTClaims)
+	if !ok {
+		return "", errors.New("لا يمكن تحويل البيانات")
+	}
+
+	// إنشاء توكن وصول جديد
+	return GenerateJWT(claims.UserID, claims.Email, claims.Role)
+}
+
 // GetUserRoleFromToken استخراج دور المستخدم من التوكن
 func GetUserRoleFromToken(tokenString string) (string, error) {
 	claims, err := VerifyJWT(tokenString)
@@ -108,4 +176,67 @@ func GetUserRoleFromToken(tokenString string) (string, error) {
 	}
 
 	return role, nil
+}
+
+// GenerateRefreshToken إنشاء refresh token جديد
+func GenerateRefreshToken(userID uuid.UUID, email string, role string) (string, error) {
+	// الحصول على مفتاح التوقيع من متغيرات البيئة
+	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+	}
+
+	// تعريف صلاحية التوكن (7 أيام)
+	expirationTime := time.Now().Add(RefreshTokenExpiry)
+
+	// إنشاء الـ claims
+	claims := &JWTClaims{
+		UserID: userID,
+		Email:  email,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			Issuer:    "pharmacy-backend-refresh",
+		},
+	}
+
+	// إنشاء التوكن
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	// توقيع التوكن
+	tokenString, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
+}
+
+// VerifyRefreshToken التحقق من صحة refresh token
+func VerifyRefreshToken(tokenString string) (jwt.MapClaims, error) {
+	// الحصول على مفتاح التوقيع من متغيرات البيئة
+	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-refresh-secret-key" // يجب أن يكون نفس المفتاح المستخدم في التوقيع
+	}
+
+	// التحقق من صيغة التوكن
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// التأكد من خوارزمية التوقيع
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("خوارزمية توقيع غير صالحة")
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// التحقق من صحة التوكن
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		return claims, nil
+	}
+
+	return nil, errors.New("refresh token غير صالح")
 }

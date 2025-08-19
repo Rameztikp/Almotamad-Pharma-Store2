@@ -4,14 +4,53 @@ import { lazy, Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
 import AdminLayout from '../components/admin/AdminLayout';
 
+// Simple Error Boundary component
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Error in component:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || <div>Something went wrong.</div>;
+    }
+    return this.props.children;
+  }
+}
+
 // Lazy load admin pages
 const LoginPage = lazy(() => import('../pages/admin/LoginPage'));
 const DashboardPage = lazy(() => import('../pages/admin/DashboardPage'));
 const WholesaleProductsPage = lazy(() => import('../pages/admin/products/WholesaleProducts'));
 const RetailProductsPage = lazy(() => import('../pages/admin/products/RetailProducts'));
+// Lazy load all admin pages
 const UsersPage = lazy(() => import('../pages/admin/UsersPage'));
 const CouponsPage = lazy(() => import('../pages/admin/CouponsPage'));
-const WholesaleCustomersPage = lazy(() => import('../pages/admin/WholesaleCustomersPage'));
+const CategoriesPage = lazy(() => import('../pages/admin/CategoriesPage'));
+// Using the test component
+const WholesaleCustomersPage = lazy(() => import('../pages/admin/WholesaleCustomersPage2')
+  .catch((error) => {
+    console.error('Error loading WholesaleCustomersPage2:', error);
+    return {
+      default: () => (
+        <div className="p-6">
+          <h2 className="text-xl font-semibold mb-4">Error Loading Page</h2>
+          <p>Failed to load the Wholesale Customers page. Please try again later.</p>
+          <p>Error details: {error.message}</p>
+        </div>
+      )
+    };
+  })
+);
 const RetailCustomersPage = lazy(() => import('../pages/admin/RetailCustomersPage'));
 const WholesaleOrdersPage = lazy(() => import('../pages/admin/WholesaleOrdersPage'));
 const RetailOrdersPage = lazy(() => import('../pages/admin/RetailOrdersPage'));
@@ -189,6 +228,16 @@ const AdminRoutes = () => {
           element={
             <ProtectedRoute>
               <UsersPage />
+            </ProtectedRoute>
+          }
+        />
+        
+        {/* Categories */}
+        <Route
+          path="categories"
+          element={
+            <ProtectedRoute>
+              <CategoriesPage />
             </ProtectedRoute>
           }
         />

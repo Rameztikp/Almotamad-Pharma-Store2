@@ -1,6 +1,13 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { adminLogin } from '../services/adminApi';
-import { Navigate, useLocation } from 'react-router-dom';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import { adminLogin } from "../services/adminApi";
+import ApiService from "../services/api";
+import { Navigate, useLocation } from "react-router-dom";
 
 const AuthContext = createContext(null);
 
@@ -8,54 +15,90 @@ export const AuthProvider = ({ children }) => {
   const [admin, setAdmin] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize auth state from localStorage
+  // Initialize auth state by fetching profile via cookies
   useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    const adminData = localStorage.getItem('adminData');
-    
-    if (token && adminData) {
-      setAdmin(JSON.parse(adminData));
-    }
-    setLoading(false);
+    let mounted = true;
+    const init = async () => {
+      try {
+        if (!window.location.pathname.startsWith("/admin")) {
+          setAdmin(null);
+          setLoading(false);
+          return;
+        }
+        const me = await ApiService.get("/auth/me");
+        const user = me?.user || me?.data?.user || me;
+        if (mounted && user && (user.role === 'admin' || user.role === 'super_admin')) {
+          setAdmin(user);
+        } else if (mounted) {
+          setAdmin(null);
+        }
+      } catch (_) {
+        if (mounted) setAdmin(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    init();
+    return () => { mounted = false; };
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (email, password, isAdmin = false) => {
     try {
-      const response = await adminLogin(email, password);
-      if (response && response.token) {
-        localStorage.setItem('authToken', response.token);
-        localStorage.setItem('adminData', JSON.stringify(response.user));
-        setAdmin(response.user);
-        return { success: true };
+      if (isAdmin) {
+        const response = await adminLogin(email, password);
+        if (response?.success) {
+          // Token cookies are set by backend; set admin state from returned user
+          const user = response.user;
+          setAdmin(user);
+          // Optional: persist admin user (not tokens) for UX
+          localStorage.setItem("adminData", JSON.stringify(user));
+          return { success: true };
+        }
+        return { success: false, message: response?.message || "فشل تسجيل الدخول" };
       }
-      return { success: false, message: response?.message || 'Login failed' };
+      // Handle regular user login here if needed
+      return { success: false, message: "نوع الحساب غير مدعوم" };
     } catch (error) {
-      return { 
-        success: false, 
-        message: error.response?.data?.message || 'Login failed. Please check your credentials.'
+      console.error("Login error:", error);
+      const errorMessage =
+        error.response?.data?.message ||
+        error.message ||
+        "حدث خطأ أثناء تسجيل الدخول. يرجى المحاولة مرة أخرى لاحقًا";
+      return {
+        success: false,
+        message: errorMessage,
       };
     }
   };
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('authToken');
+  const logout = useCallback(async () => {
+    try {
+      await ApiService.post('/auth/logout', {});
+    } catch (_) {}
+    // مسح بيانات المسؤول فقط (لا توكنات)
     localStorage.removeItem('adminData');
     setAdmin(null);
     return true;
   }, []);
 
   const isAuthenticated = useCallback(() => {
-    return !!localStorage.getItem('authToken');
-  }, []);
+    // Consider authenticated if we have admin user in state while on admin routes
+    if (window.location.pathname.startsWith("/admin")) {
+      return !!admin;
+    }
+    return false;
+  }, [admin]);
 
   return (
-    <AuthContext.Provider value={{ 
-      admin, 
-      login, 
-      logout, 
-      isAuthenticated, 
-      loading 
-    }}>
+    <AuthContext.Provider
+      value={{
+        admin,
+        login,
+        logout,
+        isAuthenticated,
+        loading,
+      }}
+    >
       {!loading && children}
     </AuthContext.Provider>
   );
@@ -64,7 +107,7 @@ export const AuthProvider = ({ children }) => {
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 };

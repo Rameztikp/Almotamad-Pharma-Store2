@@ -1,12 +1,13 @@
 package handlers
 
 import (
-	"strconv"
-	"strings"
+	"net/http"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
-	
+	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -18,6 +19,7 @@ func GetProducts(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	category := c.Query("category")
 	search := c.Query("search")
+	isWholesale := c.Query("is_wholesale")
 	sortBy := c.DefaultQuery("sort", "created_at")
 	sortOrder := c.DefaultQuery("order", "desc")
 	
@@ -33,10 +35,22 @@ func GetProducts(c *gin.Context) {
 	// بناء الاستعلام
 	query := config.DB.Model(&models.Product{}).Where("is_active = ?", true)
 	
-	// تطبيق التصفية حسب الفئة
+	// Apply category filter
 	if category != "" {
 		if categoryUUID, err := uuid.Parse(category); err == nil {
 			query = query.Where("category_id = ?", categoryUUID)
+		}
+	}
+
+	// Apply wholesale filter
+	if isWholesale == "true" {
+		userRole, exists := c.Get("userRole")
+		if exists && userRole == models.RoleAdmin {
+			// Admin gets all wholesale products
+			query = query.Where("type = ?", models.ProductTypeWholesale)
+		} else {
+			// Regular user gets only published wholesale products
+			query = query.Where("type = ? AND published_wholesale = ?", models.ProductTypeWholesale, true)
 		}
 	}
 	
@@ -72,6 +86,61 @@ func GetProducts(c *gin.Context) {
 }
 
 // GetProduct الحصول على منتج محدد
+// GetAdminProducts retrieves a paginated list of products for the admin panel
+func GetAdminProducts(c *gin.Context) {
+	var products []models.Product
+	var total int64
+
+	// Pagination parameters
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+	sort := c.DefaultQuery("sort", "created_at")
+	order := c.DefaultQuery("order", "desc")
+	page, _ := strconv.Atoi(pageStr)
+	limit, _ := strconv.Atoi(limitStr)
+
+	// Build the base query: Admin should see all products regardless of is_active
+	db := config.DB.Model(&models.Product{}).Select("*, published_wholesale")
+
+	// Filter by category
+	if categoryID := c.Query("category_id"); categoryID != "" {
+		db = db.Where("category_id = ?", categoryID)
+	}
+
+	// Filter by brand
+	if brand := c.Query("brand"); brand != "" {
+		db = db.Where("brand = ?", brand)
+	}
+
+	// Filter by type (retail/wholesale)
+	if productType := c.Query("type"); productType != "" {
+		db = db.Where("type = ?", productType)
+	}
+
+	// Count total records
+	if err := db.Count(&total).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to count products", err.Error())
+		return
+	}
+
+	// Apply sorting and pagination
+	db = db.Order(sort + " " + order).Offset((page - 1) * limit).Limit(limit)
+
+	// Fetch products
+	if err := db.Preload("Category").Find(&products).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to retrieve products", err.Error())
+		return
+	}
+
+	// Return response
+	c.JSON(http.StatusOK, gin.H{
+		"products": products,
+		"total":    total,
+		"page":     page,
+		"limit":    limit,
+	})
+}
+
 func GetProduct(c *gin.Context) {
 	id := c.Param("id")
 	productUUID, err := uuid.Parse(id)

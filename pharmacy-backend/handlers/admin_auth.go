@@ -46,8 +46,8 @@ func AdminLogin(c *gin.Context) {
 		return
 	}
 
-	// إنشاء توكن JWT
-	token, err := utils.GenerateJWT(user.ID, user.Email, string(user.Role))
+	// إنشاء access token و refresh token
+	accessToken, refreshToken, err := utils.GenerateTokens(user.ID, user.Email, string(user.Role))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "خطأ في إنشاء جلسة المستخدم"})
 		return
@@ -64,10 +64,68 @@ func AdminLogin(c *gin.Context) {
 	// إخفاء الحقول الحساسة
 	user.PasswordHash = ""
 
-	// إرجاع الاستجابة
+	// ضبط التوكنات في ملفات تعريف الارتباط HttpOnly للمشرف
+	// ملاحظة: نحتاج لإرسال الكوكيز عبر نطاقات مختلفة خلال التطوير (localhost:5173 -> localhost:8080)
+	// في وضع الإنتاج (Release) يجب أن تكون Secure=true مع HTTPS
+	// في وضع التطوير، بعض المتصفحات قد تسمح بـ Secure=false على localhost
+	// ملاحظة مهمة: SameSite=None يتطلب Secure=true وإلا سترفضه المتصفحات
+	// لذلك في التطوير (بدون HTTPS) نستخدم SameSite=Lax و Secure=false
+	isRelease := gin.Mode() == gin.ReleaseMode
+	var sameSiteMode http.SameSite
+	var isSecure bool
+	if isRelease {
+		// Production: cross-site cookies بحاجة None + Secure=true
+		sameSiteMode = http.SameSiteNoneMode
+		isSecure = true
+	} else {
+		// Development: browsers on localhost ترفض None بدون Secure
+		sameSiteMode = http.SameSiteLaxMode
+		isSecure = false
+	}
+
+	// أولاً: احذف أي كوكيز قديمة واسعة النطاق (Path="/") كي لا تُرسل للمتجر
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_refresh_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	// ثانياً: ضع كوكيز المسؤول بنطاق مسار الإدمن فقط حتى لا تُرسل لواجهات المتجر
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Value:    accessToken,
+		Path:     "/api/v1/admin",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: sameSiteMode,
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_refresh_token",
+		Value:    refreshToken,
+		Path:     "/api/v1/admin",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: sameSiteMode,
+	})
+
+	// إرجاع الاستجابة بدون التوكنات
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"token":   token,
 		"user":    user,
 	})
 }
@@ -75,7 +133,14 @@ func AdminLogin(c *gin.Context) {
 // AdminAuthRequired middleware للتحقق من صلاحيات المشرف
 func AdminAuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString := c.GetHeader("Authorization")
+		// حاول القراءة من Cookie أولاً ثم تراجع إلى ترويسة Authorization
+		tokenString, errCookie := c.Cookie("admin_access_token")
+		if tokenString == "" || errCookie != nil {
+			tokenString = c.GetHeader("Authorization")
+			if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
+				tokenString = tokenString[7:]
+			}
+		}
 		if tokenString == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "مطلوب تسجيل الدخول"})
 			c.Abort()

@@ -1,25 +1,39 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
-import { ShopProvider } from './context/ShopContext';
-import { AuthProvider } from './context/AuthContext';
-import { UserAuthProvider } from './context/UserAuthContext';
-import { lazy, Suspense } from 'react';
-import InteractiveNavbar from './components/InteractiveNavbar';
-import HomePage from './components/HomePage';
-import InteractiveProductsPage from './components/InteractiveProductsPage';
-import InteractiveCartPage from './components/InteractiveCartPage';
-import InteractiveCheckoutPage from './components/InteractiveCheckoutPage';
-import OrderTrackingPage from './components/OrderTrackingPage';
-import RegisterPage from './components/RegisterPage';
-import Footer from './components/Footer';
-import ProtectedRoute from './components/ProtectedRoute';
-import ProductCardPreview from './pages/ProductCardPreview';
-import WholesaleHomePage from './pages/WholesaleHomePage';
+import React, { useEffect } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { Toaster } from "react-hot-toast";
+import { ShopProvider } from "./context/ShopContext";
+import { AuthProvider } from "./context/AuthContext";
+import { UserAuthProvider } from "./context/UserAuthContext";
+import { lazy, Suspense } from "react";
+import AppNavbar from "./components/AppNavbar";
+import HomePage from "./pages/HomePage";
+import InteractiveProductsPage from "./components/InteractiveProductsPage";
+import InteractiveCartPage from "./pages/InteractiveCartPage";
+// Load restored full checkout page
+const InteractiveCheckoutPage = lazy(() => import("./pages/InteractiveCheckoutPage"));
+import OrderTrackingPage from "./components/OrderTrackingPage";
+import RegisterPage from "./pages/RegisterPage";
+import Footer from "./components/Footer";
+import ProtectedRoute from "./components/ProtectedRoute";
+import ProductCardPreview from "./pages/ProductCardPreview";
+import withWholesaleAccess from "./components/wholesale/withWholesaleAccess";
+import WholesaleHomePage from "./pages/WholesaleHomePage";
+import UpgradeToWholesaleForm from "./components/wholesale/UpgradeToWholesaleForm";
+import MyAccount from "./pages/MyAccount";
+import MyOrdersPage from "./pages/MyOrdersPage";
+import CategoryRoute from "./pages/CategoryRoute";
+
+// Wrap the WholesaleHomePage with the withWholesaleAccess HOC
+const WholesaleHomePageWithAccess = withWholesaleAccess(WholesaleHomePage);
 
 // Lazy load admin routes
-const AdminRoutes = lazy(() => import('./routes/adminRoutes'));
-import './App.css';
+const AdminRoutes = lazy(() => import("./routes/adminRoutes"));
+import "./App.css";
 
 // Loading component for Suspense fallback
 const LoadingFallback = () => (
@@ -29,47 +43,108 @@ const LoadingFallback = () => (
 );
 
 function FullyInteractiveApp() {
+  // Clear any conflicting auth data on app start
+  useEffect(() => {
+    // Only clear admin data if we're not on admin routes
+    if (!window.location.pathname.startsWith("/admin")) {
+      localStorage.removeItem("adminData");
+      localStorage.removeItem("adminToken");
+    }
+  }, []);
+
   return (
     <Router>
-      <AuthProvider>
-        <UserAuthProvider>
-          <ShopProvider>
+      <ShopProvider>
+        <AuthProvider>
+          <UserAuthProvider>
             <div className="min-h-screen bg-gray-50">
-              <InteractiveNavbar />
+              <AppNavbar />
               <main>
                 <Routes>
                   <Route path="/" element={<HomePage />} />
-                  <Route path="/products" element={<InteractiveProductsPage />} />
-                  <Route path="/cart" element={<InteractiveCartPage />} />
-                  
-                  {/* Protected Routes */}
-                  <Route 
-                    path="/checkout" 
+                  <Route
+                    path="/products"
+                    element={<InteractiveProductsPage productType="retail" />}
+                  />
+                  {/* Pretty category URLs redirect to products with query param */}
+                  <Route path="/category/:slug" element={<CategoryRoute />} />
+                  <Route
+                    path="/wholesale"
+                    element={<WholesaleHomePageWithAccess />}
+                  />
+                  <Route
+                    path="/wholesale/products"
+                    element={
+                      <InteractiveProductsPage productType="wholesale" />
+                    }
+                  />
+                  <Route
+                    path="/wholesale/upgrade"
                     element={
                       <ProtectedRoute>
-                        <InteractiveCheckoutPage />
+                        <UpgradeToWholesaleForm />
                       </ProtectedRoute>
-                    } 
+                    }
                   />
-                  
+                  <Route path="/cart" element={<InteractiveCartPage />} />
+
+                  {/* Protected Routes */}
+                  <Route
+                    path="/account"
+                    element={
+                      <ProtectedRoute>
+                        <MyAccount />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/checkout"
+                    element={
+                      <ProtectedRoute>
+                        <Suspense fallback={<LoadingFallback />}>
+                          <InteractiveCheckoutPage />
+                        </Suspense>
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/my-orders"
+                    element={
+                      <ProtectedRoute>
+                        <MyOrdersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
                   <Route path="/track-order" element={<OrderTrackingPage />} />
-                  <Route path="/login" element={<Navigate to="/" state={{ showAuthModal: true, isLoginView: true }} replace />} />
+                  <Route path="/orders/tracking" element={<OrderTrackingPage />} />
+                  <Route
+                    path="/login"
+                    element={
+                      <Navigate
+                        to="/"
+                        state={{ showAuthModal: true, isLoginView: true }}
+                        replace
+                      />
+                    }
+                  />
                   <Route path="/register" element={<RegisterPage />} />
-                  <Route path="/preview/cards" element={<ProductCardPreview />} />
-                  
-                  {/* Wholesale Routes */}
-                  <Route path="/wholesale" element={<WholesaleHomePage />} />
-                  
+                  <Route
+                    path="/preview/cards"
+                    element={<ProductCardPreview />}
+                  />
+
                   {/* Admin Routes */}
-                  <Route 
-                    path="/admin/*" 
+                  <Route
+                    path="/admin/*"
                     element={
                       <Suspense fallback={<LoadingFallback />}>
                         <AdminRoutes />
                       </Suspense>
-                    } 
+                    }
                   />
-                  
+
                   {/* 404 Route */}
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
@@ -77,9 +152,9 @@ function FullyInteractiveApp() {
               <Footer />
               <Toaster position="bottom-right" />
             </div>
-          </ShopProvider>
-        </UserAuthProvider>
-      </AuthProvider>
+          </UserAuthProvider>
+        </AuthProvider>
+      </ShopProvider>
     </Router>
   );
 }

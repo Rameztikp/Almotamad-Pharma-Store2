@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
+import { useWholesaleAccess } from '../hooks/useWholesaleAccess.jsx';
+import { toast } from 'react-hot-toast';
+import { AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
@@ -17,13 +20,16 @@ import {
   X
 } from 'lucide-react';
 import { useShop } from '../context/useShop';
-import { productService } from '../services/productService';
+import productService from '../services/productService';
 import { categoryService } from '../services/categoryService';
 import ProductCard from '../components/ProductCard';
 import { cn } from '../lib/utils';
 
 const WholesaleHomePage = () => {
-  const { addToCart, toggleFavorite, favoriteItems } = useShop();
+  const { addToCart, toggleFavorite, favoriteItems, user } = useShop();
+  const navigate = useNavigate();
+  const { showUpgradeModal, setShowUpgradeModal } = useWholesaleAccess();
+  
   const [searchParams, setSearchParams] = useSearchParams();
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -55,6 +61,48 @@ const WholesaleHomePage = () => {
     }
   ];
 
+  // Show upgrade notification for non-wholesale users
+  useEffect(() => {
+    // Only show the upgrade notification if user is logged in and not a wholesale customer
+    if (user && !user.isWholesale) {
+      const timer = setTimeout(() => {
+        toast(
+          (t) => (
+            <div className="text-right">
+              <p className="mb-2">للاستفادة من عروض الجملة المميزة، يرجى ترقية حسابك</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowUpgradeModal(true);
+                    toast.dismiss(t.id);
+                  }}
+                  className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                >
+                  ترقية الحساب
+                </button>
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                  }}
+                  className="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm"
+                >
+                  لاحقاً
+                </button>
+              </div>
+            </div>
+          ),
+          {
+            duration: 10000,
+            position: 'bottom-left',
+            className: 'rtl text-right',
+          }
+        );
+      }, 2000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [user, setShowUpgradeModal]);
+
   // Fetch wholesale categories and products
   useEffect(() => {
     const fetchData = async () => {
@@ -65,21 +113,45 @@ const WholesaleHomePage = () => {
         // Fetch wholesale categories
         const categoriesResponse = await categoryService.getCategories();
         const categoriesData = Array.isArray(categoriesResponse) ? categoriesResponse : [];
-        setCategories(categoriesData);
         
-        // Fetch wholesale products with pagination and category filter
+        // Add product counts to categories
+        const categoriesWithCounts = categoriesData.map(cat => ({
+          ...cat,
+          productCount: Math.floor(Math.random() * 50) + 10 // Temporary mock count
+        }));
+        
+        setCategories(categoriesWithCounts);
+        
+        // Fetch wholesale products using the dedicated function
         const response = await productService.getWholesaleProducts(
           currentPage,
           productsPerPage,
           selectedCategory
         );
         
-        // Handle API response format
-        const productsData = response?.data?.products || response?.data || [];
-        const totalItems = response?.data?.total || productsData.length;
+        console.log('📦 Wholesale products response:', response);
         
-        setWholesaleProducts(productsData);
-        setTotalPages(Math.ceil(totalItems / productsPerPage));
+        // Handle the response
+        if (response.success) {
+          // The response data is already formatted by getWholesaleProducts
+          const products = Array.isArray(response.data) ? response.data : [];
+          
+          console.log('📊 Formatted wholesale products:', products);
+          
+          // Set the wholesale products
+          setWholesaleProducts(products);
+          
+          // Update pagination
+          const totalItems = response.pagination?.total || products.length;
+          setTotalPages(response.pagination?.totalPages || Math.ceil(totalItems / productsPerPage));
+          
+          console.log(`📊 Loaded ${products.length} wholesale products, ${totalItems} total`);
+        } else {
+          console.error('❌ Failed to load wholesale products:', response.error);
+          toast.error(response.error || 'حدث خطأ في تحميل المنتجات. يرجى المحاولة مرة أخرى.');
+          setWholesaleProducts([]);
+          setTotalPages(1);
+        }
         
       } catch (error) {
         console.error('❌ خطأ في جلب بيانات الجملة:', error);
@@ -91,10 +163,12 @@ const WholesaleHomePage = () => {
     
     fetchData();
   }, [currentPage, selectedCategory]);
-  
+
   // Reset to first page when category changes
   useEffect(() => {
     setCurrentPage(1);
+    // Scroll to top when category changes
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [selectedCategory]);
   
   const handleCategoryChange = (categoryId) => {
@@ -129,13 +203,19 @@ const WholesaleHomePage = () => {
   const currentBanner = wholesaleBanners[currentSlide];
   const isFavorite = (productId) => favoriteItems.some(item => item.id === productId);
 
+  // Show loading state while data is loading
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-xl text-gray-600">جاري تحميل منتجات الجملة...</p>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     );
   }
+
+  // بعد جلب المنتجات من الـ API
+  const publishedWholesaleProducts = wholesaleProducts.filter(
+    p => p.published_wholesale === true || p.is_published_wholesale === true
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -410,10 +490,10 @@ const WholesaleHomePage = () => {
                   <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
                   <p className="mt-2 text-gray-600">جاري تحميل المنتجات...</p>
                 </div>
-              ) : wholesaleProducts.length > 0 ? (
+              ) : publishedWholesaleProducts.length > 0 ? (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {wholesaleProducts.map((product) => (
+                    {publishedWholesaleProducts.map((product) => (
                       <ProductCard 
                         key={product.id}
                         product={product}

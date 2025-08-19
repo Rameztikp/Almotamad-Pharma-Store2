@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
@@ -15,120 +15,154 @@ import {
   AlertCircle
 } from 'lucide-react';
 import Toast from './Toast';
+import { orderService } from '../services/orderService';
 
 const OrderTrackingPage = () => {
   const [orderNumber, setOrderNumber] = useState('');
   const [orderData, setOrderData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState({ isVisible: false, message: '', type: 'success' });
+  const [userOrders, setUserOrders] = useState([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
   const showToast = (message, type = 'success') => {
     setToast({ isVisible: true, message, type });
   };
 
+  // جلب طلبات المستخدم لعرضها مع حالتها
+  useEffect(() => {
+    const token =
+      localStorage.getItem('client_auth_token') ||
+      localStorage.getItem('authToken') ||
+      localStorage.getItem('token');
+    if (!token) return; // المستخدم غير مسجل دخول
+
+    const fetchOrders = async () => {
+      try {
+        setIsLoadingOrders(true);
+        const res = await orderService.getUserOrders();
+        const list = res?.data?.data || res?.data || [];
+        const orders = Array.isArray(list) ? list : (Array.isArray(list?.orders) ? list.orders : []);
+        setUserOrders(orders);
+      } catch (err) {
+        console.error('Failed to load user orders:', err);
+      } finally {
+        setIsLoadingOrders(false);
+      }
+    };
+    fetchOrders();
+  }, []);
+
   const hideToast = () => {
     setToast({ isVisible: false, message: '', type: 'success' });
   };
 
-  // بيانات وهمية للطلبات
-  const mockOrders = {
-    'ORD-2024-001': {
-      orderNumber: 'ORD-2024-001',
-      status: 'delivered',
-      orderDate: '2024-01-15',
-      estimatedDelivery: '2024-01-18',
-      actualDelivery: '2024-01-17',
-      total: 245.50,
-      items: [
-        { name: 'فيتامين د 5000 وحدة', quantity: 2, price: 45.50 },
-        { name: 'كريم مرطب للوجه', quantity: 1, price: 89.99 },
-        { name: 'شامبو للأطفال', quantity: 1, price: 32.75 }
-      ],
-      shippingAddress: {
-        name: 'أحمد محمد',
-        phone: '+966501234567',
-        address: 'شارع الملك فهد، الرياض 12345'
-      },
-      trackingSteps: [
-        { status: 'confirmed', title: 'تأكيد الطلب', description: 'تم تأكيد طلبك بنجاح', date: '2024-01-15 10:30', completed: true },
-        { status: 'processing', title: 'تحضير الطلب', description: 'جاري تحضير طلبك في المستودع', date: '2024-01-15 14:20', completed: true },
-        { status: 'shipped', title: 'شحن الطلب', description: 'تم شحن طلبك وهو في الطريق إليك', date: '2024-01-16 09:15', completed: true },
-        { status: 'out_for_delivery', title: 'خرج للتوصيل', description: 'طلبك مع مندوب التوصيل', date: '2024-01-17 08:00', completed: true },
-        { status: 'delivered', title: 'تم التسليم', description: 'تم تسليم طلبك بنجاح', date: '2024-01-17 15:30', completed: true }
-      ]
-    },
-    'ORD-2024-002': {
-      orderNumber: 'ORD-2024-002',
-      status: 'shipped',
-      orderDate: '2024-01-20',
-      estimatedDelivery: '2024-01-23',
-      total: 156.75,
-      items: [
-        { name: 'عطر رجالي فاخر', quantity: 1, price: 299.00 },
-        { name: 'مسكن للألم', quantity: 2, price: 15.50 }
-      ],
-      shippingAddress: {
-        name: 'فاطمة علي',
-        phone: '+966507654321',
-        address: 'حي النخيل، جدة 21589'
-      },
-      trackingSteps: [
-        { status: 'confirmed', title: 'تأكيد الطلب', description: 'تم تأكيد طلبك بنجاح', date: '2024-01-20 11:45', completed: true },
-        { status: 'processing', title: 'تحضير الطلب', description: 'جاري تحضير طلبك في المستودع', date: '2024-01-20 16:30', completed: true },
-        { status: 'shipped', title: 'شحن الطلب', description: 'تم شحن طلبك وهو في الطريق إليك', date: '2024-01-21 10:20', completed: true },
-        { status: 'out_for_delivery', title: 'خرج للتوصيل', description: 'طلبك مع مندوب التوصيل', date: '', completed: false },
-        { status: 'delivered', title: 'تم التسليم', description: 'سيتم تسليم طلبك قريباً', date: '', completed: false }
-      ]
-    },
-    'ORD-2024-003': {
-      orderNumber: 'ORD-2024-003',
-      status: 'processing',
-      orderDate: '2024-01-22',
-      estimatedDelivery: '2024-01-25',
-      total: 89.25,
-      items: [
-        { name: 'كريم واقي الشمس', quantity: 1, price: 65.00 },
-        { name: 'فيتامين سي', quantity: 1, price: 24.25 }
-      ],
-      shippingAddress: {
-        name: 'محمد السعيد',
-        phone: '+966509876543',
-        address: 'شارع التحلية، الخبر 31952'
-      },
-      trackingSteps: [
-        { status: 'confirmed', title: 'تأكيد الطلب', description: 'تم تأكيد طلبك بنجاح', date: '2024-01-22 09:15', completed: true },
-        { status: 'processing', title: 'تحضير الطلب', description: 'جاري تحضير طلبك في المستودع', date: '2024-01-22 13:45', completed: true },
-        { status: 'shipped', title: 'شحن الطلب', description: 'سيتم شحن طلبك قريباً', date: '', completed: false },
-        { status: 'out_for_delivery', title: 'خرج للتوصيل', description: 'سيخرج طلبك للتوصيل قريباً', date: '', completed: false },
-        { status: 'delivered', title: 'تم التسليم', description: 'سيتم تسليم طلبك قريباً', date: '', completed: false }
-      ]
-    }
-  };
+  // سيتم جلب بيانات الطلب من API بدلاً من البيانات التجريبية
 
-  const handleTrackOrder = () => {
+  const handleTrackOrder = async () => {
     if (!orderNumber.trim()) {
       showToast('يرجى إدخال رقم الطلب', 'error');
       return;
     }
 
-    setIsLoading(true);
-    
-    // محاكاة استدعاء API
-    setTimeout(() => {
-      const order = mockOrders[orderNumber.trim()];
-      if (order) {
-        setOrderData(order);
-        showToast('تم العثور على الطلب بنجاح', 'success');
-      } else {
-        setOrderData(null);
-        showToast('لم يتم العثور على الطلب. يرجى التحقق من رقم الطلب', 'error');
+    try {
+      setIsLoading(true);
+      setOrderData(null);
+
+      // استدعاء خدمة التتبع - يفترض أن orderNumber هو معرف الطلب
+      const res = await orderService.trackOrder(orderNumber.trim());
+      const raw = res?.data?.data || res?.data || res;
+
+      if (!raw) {
+        showToast('لم يتم العثور على بيانات الطلب', 'error');
+        setIsLoading(false);
+        return;
       }
+
+      // تطبيع البيانات القادمة من السيرفر إلى الشكل المطلوب في الواجهة
+      const normalized = {
+        orderNumber: raw.order_number || raw.orderNumber || raw.id || orderNumber.trim(),
+        status: raw.status || 'pending',
+        orderDate: raw.order_date || raw.created_at || raw.createdAt || '',
+        estimatedDelivery: raw.estimated_delivery || raw.estimatedDelivery || '',
+        actualDelivery: raw.delivered_at || raw.deliveredAt || '',
+        total: Number(raw.total || raw.total_amount || raw.totalAmount || 0),
+        items: Array.isArray(raw.items)
+          ? raw.items.map((it) => ({
+              name: it.name || it.product_name || it.product?.name || 'منتج',
+              quantity: it.quantity || it.qty || 1,
+              price: Number(it.price || it.unit_price || it.product?.price || 0),
+            }))
+          : [],
+        shippingAddress: {
+          name:
+            raw.shipping_name ||
+            raw.shipping?.name ||
+            raw.customer_name ||
+            raw.customer?.name ||
+            'العميل',
+          phone:
+            raw.shipping_phone ||
+            raw.shipping?.phone ||
+            raw.customer_phone ||
+            raw.customer?.phone ||
+            '',
+          address:
+            raw.shipping_address ||
+            raw.shipping?.address ||
+            raw.address ||
+            '',
+        },
+        trackingSteps: Array.isArray(raw.tracking)
+          ? raw.tracking.map((t) => ({
+              status: t.status || t.code || 'pending',
+              title: t.title || 'حالة الطلب',
+              description: t.description || '',
+              date: t.date || t.at || '',
+              completed: Boolean(t.completed ?? ['confirmed','processing','shipped','out_for_delivery','delivered'].includes(t.status)),
+            }))
+          : [],
+      };
+
+      // إذا لم يرسل السيرفر تتبع تفصيلي، أنشئ خط زمني بسيط اعتماداً على الحالة
+      if (!normalized.trackingSteps.length && normalized.status) {
+        const orderTs = normalized.orderDate || '';
+        const steps = [
+          { status: 'confirmed', title: 'تأكيد الطلب', description: 'تم تأكيد طلبك', date: orderTs },
+          { status: 'processing', title: 'تحضير الطلب', description: 'جاري التحضير', date: '' },
+          { status: 'shipped', title: 'شحن الطلب', description: 'تم الشحن', date: '' },
+          { status: 'out_for_delivery', title: 'خرج للتوصيل', description: 'مع المندوب', date: '' },
+          { status: 'delivered', title: 'تم التسليم', description: 'اكتمل التسليم', date: normalized.actualDelivery || '' },
+        ];
+        const indexMap = {
+          pending: 0,
+          confirmed: 1,
+          processing: 2,
+          shipped: 3,
+          out_for_delivery: 4,
+          delivered: 5,
+          canceled: -1,
+          cancelled: -1,
+        };
+        const idx = indexMap[normalized.status] ?? 0;
+        normalized.trackingSteps = steps.map((s, i) => ({ ...s, completed: idx >= i }));
+      }
+
+      setOrderData(normalized);
+      showToast('تم العثور على الطلب بنجاح', 'success');
+    } catch (error) {
+      console.error('Track order failed:', error);
+      const msg = error?.response?.data?.message || 'لم يتم العثور على الطلب. يرجى التحقق من رقم الطلب';
+      showToast(msg, 'error');
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
+      case 'pending':
+        return 'bg-gray-400';
       case 'confirmed':
         return 'bg-blue-500';
       case 'processing':
@@ -139,6 +173,9 @@ const OrderTrackingPage = () => {
         return 'bg-orange-500';
       case 'delivered':
         return 'bg-green-500';
+      case 'canceled':
+      case 'cancelled':
+        return 'bg-red-500';
       default:
         return 'bg-gray-300';
     }
@@ -146,6 +183,8 @@ const OrderTrackingPage = () => {
 
   const getStatusText = (status) => {
     switch (status) {
+      case 'pending':
+        return 'قيد الانتظار';
       case 'confirmed':
         return 'مؤكد';
       case 'processing':
@@ -156,8 +195,11 @@ const OrderTrackingPage = () => {
         return 'خرج للتوصيل';
       case 'delivered':
         return 'تم التسليم';
+      case 'canceled':
+      case 'cancelled':
+        return 'ملغي';
       default:
-        return 'غير معروف';
+        return 'قيد الانتظار';
     }
   };
 
@@ -186,6 +228,55 @@ const OrderTrackingPage = () => {
           <h1 className="text-4xl font-bold text-gray-800 mb-4">تتبع الطلب</h1>
           <p className="text-lg text-gray-600">أدخل رقم طلبك لمتابعة حالة التوصيل</p>
         </div>
+
+        {/* قائمة طلباتي (إن وُجدت) */}
+        {userOrders.length > 0 && (
+          <Card className="max-w-4xl mx-auto mb-8">
+            <CardHeader>
+              <CardTitle>طلباتي</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoadingOrders ? (
+                <div className="text-gray-500">جاري تحميل الطلبات...</div>
+              ) : (
+                <div className="divide-y">
+                  {userOrders.map((o, idx) => {
+                    const id = o.order_number || o.orderNumber || o.id || '';
+                    const status = o.status || 'pending';
+                    const total = Number(o.total || o.total_amount || o.totalAmount || 0);
+                    const created = o.order_date || o.created_at || o.createdAt || '';
+                    return (
+                      <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between py-3 gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="font-semibold">رقم الطلب: {id}</span>
+                            <Badge className={`${getStatusColor(status)} text-white`}>{getStatusText(status)}</Badge>
+                          </div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            <span>التاريخ: {created}</span>
+                            {total ? <span className="ml-3">الإجمالي: {total.toFixed(2)} ريال</span> : null}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            className="bg-blue-600 hover:bg-blue-700"
+                            onClick={() => {
+                              setOrderNumber(String(id));
+                              // تتبع سريع
+                              setTimeout(() => handleTrackOrder(), 0);
+                            }}
+                          >
+                            تتبع
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Search Section */}
         <Card className="max-w-2xl mx-auto mb-8">
@@ -216,21 +307,7 @@ const OrderTrackingPage = () => {
               </Button>
             </div>
             
-            {/* Sample Order Numbers */}
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-blue-800 font-medium mb-2">أرقام طلبات للتجربة:</p>
-              <div className="flex flex-wrap gap-2">
-                {Object.keys(mockOrders).map((orderNum) => (
-                  <button
-                    key={orderNum}
-                    onClick={() => setOrderNumber(orderNum)}
-                    className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
-                  >
-                    {orderNum}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* تلميح: أدخل رقم طلبك كما استلمته بعد الشراء */}
           </CardContent>
         </Card>
 

@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
@@ -16,7 +18,8 @@ import (
 func GetAllUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	role := c.Query("role")
+	role := strings.Trim(c.Query("role"), "/")
+	search := c.Query("search")
 	
 	if page < 1 {
 		page = 1
@@ -29,15 +32,31 @@ func GetAllUsers(c *gin.Context) {
 	
 	query := config.DB.Model(&models.User{})
 	
-	if role != "" {
+	// معالجة معلمة الدور
+	if role == "customer" {
+		query = query.Where("role IN (?)", []string{"customer", "retail", "wholesale"})
+	} else if role != "" {
 		query = query.Where("role = ?", role)
 	}
 	
-	var total int64
-	query.Count(&total)
+	// إضافة البحث إذا وجد
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("full_name ILIKE ? OR email ILIKE ? OR phone ILIKE ?", 
+			searchTerm, searchTerm, searchTerm)
+	}
 	
+	// حساب العدد الإجمالي للسجلات
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to count users", err.Error())
+		return
+	}
+	
+	// جلب البيانات مع التقسيم للصفحات
 	var users []models.User
 	err := query.
+		Select("id", "full_name", "email", "phone", "role", "is_active", "account_type", "wholesale_access", "created_at", "updated_at", "date_of_birth").
 		Order("created_at DESC").
 		Limit(limit).
 		Offset(offset).
@@ -53,8 +72,16 @@ func GetAllUsers(c *gin.Context) {
 		users[i].PasswordHash = ""
 	}
 	
-	pagination := utils.CalculatePagination(page, limit, total)
-	utils.PaginatedSuccessResponse(c, "Users retrieved successfully", users, pagination)
+	// إرجاع البيانات بالتنسيق المتوقع من الواجهة الأمامية
+	response := gin.H{
+		"data": gin.H{
+			"customers": users,
+			"total":    total,
+		},
+		"success": true,
+	}
+	
+	c.JSON(http.StatusOK, response)
 }
 
 // GetUserByID الحصول على مستخدم بواسطة ID (Super Admin)

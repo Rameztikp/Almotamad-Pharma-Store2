@@ -12,7 +12,7 @@ import {
 } from 'react-icons/fi';
 import { format } from 'date-fns';
 import { arSA } from 'date-fns/locale';
-import { useAuth } from '../../../context/AuthContext';
+import { adminApi } from '../../../services/adminApi';
 import { toast } from 'react-hot-toast';
 
 const SupplierAccountStatement = ({ supplier, onClose }) => {
@@ -44,42 +44,34 @@ const SupplierAccountStatement = ({ supplier, onClose }) => {
   // Fetch transactions
   useEffect(() => {
     const fetchTransactions = async () => {
-      if (!supplier) return;
+      if (!supplier?.id) return;
       
       try {
         setLoading(true);
-        const token = getToken();
-        let url = `http://localhost:8080/api/v1/admin/suppliers/${supplier.id}/transactions?`;
         
-        // Add date range to URL
-        url += `start_date=${formatDate(dateRange.startDate)}`;
-        url += `&end_date=${formatDate(dateRange.endDate)}`;
+        const params = {
+          startDate: formatDate(dateRange.startDate),
+          endDate: formatDate(dateRange.endDate),
+          type: filters.type === 'all' ? '' : filters.type
+        };
         
-        // Add type filter if not 'all'
-        if (filters.type !== 'all') {
-          url += `&type=${filters.type}`;
+        const response = await adminApi.getSupplierTransactions(supplier.id, params);
+        
+        if (response.success) {
+          setTransactions(response.data || []);
+        } else {
+          throw new Error(response.message || 'فشل في تحميل كشف الحساب');
         }
-        
-        const response = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        if (!response.ok) throw new Error('فشل في تحميل كشف الحساب');
-        
-        const data = await response.json();
-        setTransactions(data.data || []);
       } catch (error) {
-        toast.error(error.message);
+        console.error('Error fetching transactions:', error);
+        toast.error(error.message || 'حدث خطأ أثناء تحميل كشف الحساب');
       } finally {
         setLoading(false);
       }
     };
     
     fetchTransactions();
-  }, [supplier, dateRange, filters, getToken]);
+  }, [supplier?.id, dateRange, filters]);
 
   // Calculate running balance
   const calculateBalance = () => {

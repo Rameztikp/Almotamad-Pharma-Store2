@@ -15,6 +15,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../../context/AuthContext';
+import { adminApi } from '../../../services/adminApi';
 import AddStockModal from '../../../components/admin/inventory/AddStockModal';
 import AdjustStockModal from '../../../components/admin/inventory/AdjustStockModal';
 
@@ -48,52 +49,44 @@ const InventoryManagementPage = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const token = getToken();
         
-        // Fetch inventory data
-        const [inventoryRes, suppliersRes, branchesRes] = await Promise.all([
-          fetch('http://localhost:8080/api/v1/inventory', {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          }),
-          fetch('http://localhost:8080/api/v1/suppliers', {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          }),
-          fetch('http://localhost:8080/api/v1/branches', {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          })
+        // Fetch inventory data using adminApi
+        const [inventoryResult, suppliersResult, branchesResult] = await Promise.all([
+          adminApi.getInventory(),
+          adminApi.getSuppliers(),
+          adminApi.getBranches()
         ]);
         
-        if (!inventoryRes.ok) throw new Error('فشل في تحميل بيانات المخزون');
-        if (!suppliersRes.ok) throw new Error('فشل في تحميل بيانات الموردين');
-        if (!branchesRes.ok) throw new Error('فشل في تحميل بيانات الفروع');
+        // Handle inventory response
+        if (inventoryResult.success) {
+          setInventory(inventoryResult.data || []);
+        } else {
+          throw new Error(inventoryResult.message || 'فشل في تحميل بيانات المخزون');
+        }
         
-        const [inventoryData, suppliersData, branchesData] = await Promise.all([
-          inventoryRes.json(),
-          suppliersRes.json(),
-          branchesRes.json()
-        ]);
+        // Handle suppliers response
+        if (suppliersResult.success) {
+          setSuppliers(suppliersResult.data || []);
+        } else {
+          throw new Error(suppliersResult.message || 'فشل في تحميل بيانات الموردين');
+        }
         
-        setInventory(inventoryData);
-        setSuppliers(suppliersData);
-        setBranches(branchesData);
+        // Handle branches response
+        if (branchesResult.success) {
+          setBranches(branchesResult.data || []);
+        } else {
+          throw new Error(branchesResult.message || 'فشل في تحميل بيانات الفروع');
+        }
       } catch (error) {
-        toast.error(error.message);
+        console.error('Error fetching data:', error);
+        toast.error(error.message || 'حدث خطأ أثناء تحميل البيانات');
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, [getToken]);
+  }, []);
 
   // Calculate inventory summary
   const totalProducts = inventory.length;
@@ -137,36 +130,75 @@ const InventoryManagementPage = () => {
 
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
 
-  // Handle actions
-  const handleAddStock = (productId) => {
-    // Navigate to add stock page or open modal
-    navigate(`/admin/inventory/${productId}/add-stock`);
+  // Handle adding stock
+  const handleAddStock = async (formData) => {
+    try {
+      setLoading(true);
+      const response = await adminApi.adjustInventory({
+        ...formData,
+        type: 'add',
+        productId: selectedProduct.id
+      });
+      
+      if (response.success) {
+        // Refresh inventory data
+        const inventoryResult = await adminApi.getInventory();
+        if (inventoryResult.success) {
+          setInventory(inventoryResult.data || []);
+          toast.success('تمت إضافة المخزون بنجاح');
+          setShowAddStockModal(false);
+          return true;
+        } else {
+          throw new Error(inventoryResult.message || 'فشل في تحديث بيانات المخزون');
+        }
+      } else {
+        throw new Error(response.message || 'فشل في إضافة المخزون');
+      }
+    } catch (error) {
+      console.error('Error adding stock:', error);
+      toast.error(error.message || 'حدث خطأ أثناء إضافة المخزون');
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleAdjustStock = (productId) => {
-    // Navigate to adjust stock page or open modal
-    navigate(`/admin/inventory/${productId}/adjust`);
+  // Handle adjusting stock
+  const handleAdjustStock = async (formData) => {
+    try {
+      setLoading(true);
+      const response = await adminApi.adjustInventory({
+        ...formData,
+        type: 'adjust',
+        productId: selectedProduct.id
+      });
+      
+      if (response.success) {
+        // Refresh inventory data
+        const inventoryResult = await adminApi.getInventory();
+        if (inventoryResult.success) {
+          setInventory(inventoryResult.data || []);
+          toast.success('تم تعديل المخزون بنجاح');
+          setShowAdjustStockModal(false);
+          return true;
+        } else {
+          throw new Error(inventoryResult.message || 'فشل في تحديث بيانات المخزون');
+        }
+      } else {
+        throw new Error(response.message || 'فشل في تعديل المخزون');
+      }
+    } catch (error) {
+      console.error('Error adjusting stock:', error);
+      toast.error(error.message || 'حدث خطأ أثناء تعديل المخزون');
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // View transaction history
   const handleViewHistory = (productId) => {
-    // Navigate to view history page
     navigate(`/admin/inventory/${productId}/history`);
-  };
-
-  // Handle stock addition success
-  const handleStockAdded = (updatedProduct) => {
-    setInventory(inventory.map(item => 
-      item.id === updatedProduct.id ? { ...item, ...updatedProduct } : item
-    ));
-    setSelectedProduct(null);
-  };
-
-  // Handle stock adjustment success
-  const handleStockAdjusted = (updatedProduct) => {
-    setInventory(inventory.map(item => 
-      item.id === updatedProduct.id ? { ...item, ...updatedProduct } : item
-    ));
-    setSelectedProduct(null);
   };
 
   // Open add stock modal

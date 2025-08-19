@@ -7,10 +7,9 @@ import (
 )
 
 // AddOrderFields migration adds new fields to orders and order_items tables
-type AddOrderFields struct{}
 
-// Migrate runs the migration
-executeMigration := func(db *gorm.DB) error {
+// AddOrderFields runs the migration
+func AddOrderFields(db *gorm.DB) error {
 	// Add subtotal column to orders table
 	if err := db.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS subtotal DECIMAL(10,2) NOT NULL DEFAULT 0`).Error; err != nil {
 		return err
@@ -46,8 +45,8 @@ executeMigration := func(db *gorm.DB) error {
 	return nil
 }
 
-// Rollback rolls back the migration
-rollbackMigration := func(db *gorm.DB) error {
+// RollbackAddOrderFields rolls back the migration
+func RollbackAddOrderFields(db *gorm.DB) error {
 	// Note: In production, you might want to back up data before dropping columns
 	if err := db.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS subtotal`).Error; err != nil {
 		return err

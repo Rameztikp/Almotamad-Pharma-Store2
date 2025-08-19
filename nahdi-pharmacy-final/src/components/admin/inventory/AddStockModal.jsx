@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { useAuth } from '../../../context/AuthContext';
+import { adminApi } from '../../../services/adminApi';
 
 const AddStockModal = ({ isOpen, onClose, product, onSuccess }) => {
   const { getToken } = useAuth();
@@ -23,30 +23,25 @@ const AddStockModal = ({ isOpen, onClose, product, onSuccess }) => {
 
   const fetchSuppliers = async () => {
     try {
-      const token = getToken();
-      const response = await fetch('http://localhost:8080/api/v1/suppliers', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      const response = await adminApi.getSuppliers();
+      
+      if (response.success) {
+        const suppliersData = response.data || [];
+        setSuppliers(suppliersData);
+        
+        // Set first supplier as default if exists
+        if (suppliersData.length > 0) {
+          setFormData(prev => ({
+            ...prev,
+            supplierId: suppliersData[0].id
+          }));
         }
-      });
-      
-      if (!response.ok) {
-        throw new Error('فشل في تحميل بيانات الموردين');
-      }
-      
-      const data = await response.json();
-      setSuppliers(data);
-      
-      // Set first supplier as default if exists
-      if (data.length > 0) {
-        setFormData(prev => ({
-          ...prev,
-          supplierId: data[0].id
-        }));
+      } else {
+        throw new Error(response.message || 'فشل في تحميل بيانات الموردين');
       }
     } catch (error) {
-      toast.error(error.message);
+      console.error('Error fetching suppliers:', error);
+      toast.error(error.message || 'حدث خطأ أثناء تحميل بيانات الموردين');
     }
   };
 
@@ -60,37 +55,33 @@ const AddStockModal = ({ isOpen, onClose, product, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    
+    if (!product) return;
     
     try {
-      const token = getToken();
-      const response = await fetch('http://localhost:8080/api/v1/inventory/transactions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          productId: product.id,
-          supplierId: formData.supplierId,
-          quantity: parseInt(formData.quantity, 10),
-          unitPrice: parseFloat(formData.unitPrice),
-          transactionType: 'purchase',
-          referenceNumber: formData.referenceNumber || undefined,
-          notes: formData.notes || undefined
-        })
+      setLoading(true);
+      
+      const response = await adminApi.adjustInventory({
+        productId: product.id,
+        type: 'add',
+        quantity: Number(formData.quantity),
+        unitPrice: Number(formData.unitPrice),
+        supplierId: formData.supplierId,
+        referenceNumber: formData.referenceNumber,
+        notes: formData.notes
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'فشل في إضافة الكمية');
+      if (response.success) {
+        toast.success('تمت إضافة المخزون بنجاح');
+        // Pass the updated product data to parent
+        onSuccess(response.data);
+        onClose();
+      } else {
+        throw new Error(response.message || 'فشل في إضافة المخزون');
       }
-      
-      toast.success('تمت إضافة الكمية بنجاح');
-      onSuccess();
-      onClose();
     } catch (error) {
-      toast.error(error.message);
+      console.error('Error adding stock:', error);
+      toast.error(error.message || 'حدث خطأ أثناء إضافة المخزون');
     } finally {
       setLoading(false);
     }

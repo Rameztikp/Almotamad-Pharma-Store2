@@ -13,80 +13,85 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Handle admin API routes
-      '^/api/admin': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => {
-          console.log(`👨‍💼 Proxying Admin API: ${path}`);
-          return path.replace(/^\/api\/admin/, '/api/v1/admin');
-        },
-        configure: (proxy, _options) => {
-          proxy.on('error', (err, _req, _res) => {
-            console.error('Admin API Proxy error:', err);
-          });
-        }
-      },
-      // Handle cart API routes
-      '^/api/cart': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => {
-          console.log(`🛒 Proxying Cart API: ${path}`);
-          return '/api/v1/cart';
-        },
-        configure: (proxy, _options) => {
-          proxy.on('error', (err, _req, _res) => {
-            console.error('Cart Proxy error:', err);
-          });
-        }
-      },
-      // Handle other API routes
+      // Handle all API routes under /api
       '^/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
+        ws: true,
+        // Don't rewrite the path, keep /api/v1 as is
         rewrite: (path) => {
-          // For all other /api/* requests, forward to /api/v1/*
-          const newPath = path.replace(/^\/api/, '/api/v1');
-          console.log(`📡 Proxying API: ${path} → http://localhost:8080${newPath}`);
-          return newPath;
+          console.log(`🌐 Proxying API: ${path} → http://localhost:8080${path}`);
+          return path; // Return the path as is without modifications
         },
         configure: (proxy, _options) => {
-          proxy.on('error', (err, _req, _res) => {
+          proxy.on('error', (err, req, res) => {
             console.error('API Proxy error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': 'http://localhost:5173',
+                'Access-Control-Allow-Credentials': 'true',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+              });
+            }
+            res.end(JSON.stringify({ error: 'Proxy Error', details: err.message }));
           });
+          
           proxy.on('proxyReq', (proxyReq, req, _res) => {
             console.log(`🔵 Sending request to: ${req.method} ${req.url}`);
+            console.log('Request Headers:', req.headers);
+            
+            // Add CORS headers to the request
+            proxyReq.setHeader('Origin', 'http://localhost:5173');
+            
+            // Handle preflight requests
+            if (req.method === 'OPTIONS') {
+              proxyReq.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+              proxyReq.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+              proxyReq.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+              proxyReq.setHeader('Access-Control-Allow-Credentials', 'true');
+              proxyReq.end();
+              return;
+            }
           });
-          proxy.on('proxyRes', (proxyRes, req, _res) => {
+          
+          proxy.on('proxyRes', (proxyRes, req, res) => {
             console.log(`🟢 Received ${proxyRes.statusCode} from: ${req.url}`);
+            console.log('Response Headers:', proxyRes.headers);
+            
+            // Add CORS headers to the response
+            proxyRes.headers['Access-Control-Allow-Origin'] = 'http://localhost:5173';
+            proxyRes.headers['Access-Control-Allow-Credentials'] = 'true';
+            proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+            proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
+            
+            // Handle redirects
+            if (proxyRes.statusCode === 301 || proxyRes.statusCode === 302) {
+              const location = proxyRes.headers.location;
+              if (location) {
+                console.log(`🔄 Redirecting to: ${location}`);
+                // Modify the location header to ensure it's a full URL if needed
+                if (location.startsWith('/')) {
+                  proxyRes.headers.location = `http://localhost:5173${location}`;
+                }
+              }
+            }
           });
         }
       },
-      // Handle admin API routes - forward to backend
+      // Handle legacy /v1/admin routes (for backward compatibility)
       '^/v1/admin': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
         ws: true,
         rewrite: (path) => {
-          // Keep the path as is since it's already /v1/admin/*
-          console.log(`🔐 Proxying Admin API: ${path} → http://localhost:8080${path}`);
-          return path;
-        },
-        configure: (proxy, _options) => {
-          proxy.on('error', (err, _req, _res) => {
-            console.error('Admin API Proxy error:', err);
-          });
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            console.log(`🔵 Sending Admin API request: ${req.method} ${req.url}`);
-          });
-          proxy.on('proxyRes', (proxyRes, req, _res) => {
-            console.log(`🟢 Received Admin API response: ${proxyRes.statusCode} ${req.url}`);
-          });
+          // Convert /v1/admin to /api/v1/admin
+          const newPath = path.replace(/^\/v1\/admin/, '/api/v1/admin');
+          console.log(`🔐 Proxying Legacy Admin API: ${path} → http://localhost:8080${newPath}`);
+          return newPath;
         }
       },
       // Handle admin frontend routes - only rewrite to index.html for non-asset paths

@@ -1,12 +1,13 @@
 package models
 
 import (
-	"time"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // StringArray نوع مخصص لتخزين مصفوفة من النصوص في JSON
@@ -55,8 +56,17 @@ func (d *Dimensions) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, d)
 }
 
+// ProductType represents the type of product (retail or wholesale)
+type ProductType string
+
+const (
+	ProductTypeRetail    ProductType = "retail"
+	ProductTypeWholesale ProductType = "wholesale"
+)
+
 type Product struct {
 	ID                  uuid.UUID    `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	Type                ProductType  `json:"type" gorm:"type:varchar(10);not null;default:'retail'"`
 	Name                string       `json:"name" gorm:"not null"`
 	Description         string       `json:"description" gorm:"type:text"`
 	Price               float64      `json:"price" gorm:"not null"`
@@ -70,6 +80,8 @@ type Product struct {
 	Images              StringArray  `json:"images" gorm:"type:jsonb"`
 	IsActive            bool         `json:"is_active" gorm:"default:true"`
 	IsFeatured          bool         `json:"is_featured" gorm:"default:false"`
+	PublishedRetail     bool         `json:"published_retail" gorm:"default:false"`
+	PublishedWholesale  bool         `json:"published_wholesale" gorm:"default:false"`
 	Weight              *float64     `json:"weight,omitempty"`
 	Dimensions          *Dimensions  `json:"dimensions,omitempty" gorm:"type:jsonb"`
 	Tags                StringArray  `json:"tags" gorm:"type:jsonb"`

@@ -1,19 +1,69 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
+
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
+// UploadImages رفع صور المنتجات
+func UploadImages(c *gin.Context) {
+	// Get the files from the request
+	files, err := c.FormFile("images")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "No files were uploaded",
+		})
+		return
+	}
+
+	// Create uploads directory if it doesn't exist
+	uploadDir := "uploads"
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		os.Mkdir(uploadDir, 0755)
+	}
+
+	// Generate a unique filename
+	fileExtension := filepath.Ext(files.Filename)
+	filename := uuid.New().String() + fileExtension
+	
+	// Save the file
+	filePath := filepath.Join(uploadDir, filename)
+	if err := c.SaveUploadedFile(files, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to save uploaded file",
+		})
+		return
+	}
+
+	// Return the uploaded file information
+	c.JSON(http.StatusOK, gin.H{
+		"filename": filename,
+		"path":     "/uploads/" + filename,
+		"size":     files.Size,
+	})
+}
+
 // CreateProductRequest بنية طلب إنشاء منتج جديد
 type CreateProductRequest struct {
-	Name                string    `json:"name" binding:"required"`
+	Name                string      `json:"name" binding:"required"`
+	Type                string      `json:"type" binding:"required,oneof=retail wholesale"`
 	Description         string    `json:"description"`
 	Price               float64   `json:"price" binding:"required,gt=0"`
 	DiscountPrice       *float64  `json:"discount_price,omitempty"`
@@ -24,7 +74,7 @@ type CreateProductRequest struct {
 	MinStockLevel       int       `json:"min_stock_level" binding:"min=0"`
 	ImageURL            string    `json:"image_url"`
 	Images              []string  `json:"images"`
-	IsActive            bool      `json:"is_active"`
+	IsActive            *bool     `json:"is_active,omitempty"`
 	IsFeatured          bool      `json:"is_featured"`
 	Weight              *float64  `json:"weight,omitempty"`
 	Dimensions          *models.Dimensions `json:"dimensions,omitempty"`
@@ -101,8 +151,12 @@ func CreateProduct(c *gin.Context) {
 		return
 	}
 	
+	// Convert string type to ProductType
+	productType := models.ProductType(req.Type)
+	
 	product := models.Product{
 		Name:                req.Name,
+		Type:                productType,
 		Description:         req.Description,
 		Price:               req.Price,
 		DiscountPrice:       req.DiscountPrice,
@@ -113,7 +167,7 @@ func CreateProduct(c *gin.Context) {
 		MinStockLevel:       req.MinStockLevel,
 		ImageURL:            req.ImageURL,
 		Images:              req.Images,
-		IsActive:            req.IsActive,
+		IsActive:            true,
 		IsFeatured:          req.IsFeatured,
 		Weight:              req.Weight,
 		Dimensions:          req.Dimensions,
@@ -130,6 +184,10 @@ func CreateProduct(c *gin.Context) {
 		Contraindications:   req.Contraindications,
 	}
 	
+	if req.IsActive != nil {
+		product.IsActive = *req.IsActive
+	}
+	
 	if err := config.DB.Create(&product).Error; err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create product", err.Error())
 		return
@@ -140,131 +198,180 @@ func CreateProduct(c *gin.Context) {
 
 // UpdateProduct تحديث منتج موجود (Admin)
 func UpdateProduct(c *gin.Context) {
-	id := c.Param("id")
-	productUUID, err := uuid.Parse(id)
-	if err != nil {
-		utils.BadRequestResponse(c, "Invalid product ID", err.Error())
-		return
-	}
-	
-	var req UpdateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestResponse(c, "Invalid request data", err.Error())
-		return
-	}
-	
-	var product models.Product
-	if err := config.DB.Where("id = ?", productUUID).First(&product).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundResponse(c, "Product not found")
-		} else {
-			utils.InternalServerErrorResponse(c, "Failed to fetch product", err.Error())
-		}
-		return
-	}
-	
-	// تحديث الحقول
-	if req.Name != nil {
-		product.Name = *req.Name
-	}
-	if req.Description != nil {
-		product.Description = *req.Description
-	}
-	if req.Price != nil {
-		product.Price = *req.Price
-	}
-	if req.DiscountPrice != nil {
-		product.DiscountPrice = req.DiscountPrice
-	}
-	if req.SKU != nil {
-		// التحقق من عدم وجود SKU مكرر إذا تم تغييره
-		if *req.SKU != product.SKU {
-			var existingProduct models.Product
-			if err := config.DB.Where("sku = ? AND id <> ?", *req.SKU, product.ID).First(&existingProduct).Error; err == nil {
-				utils.BadRequestResponse(c, "Product with this SKU already exists", "")
-				return
-			}
-		}
-		product.SKU = *req.SKU
-	}
-	if req.CategoryID != nil {
-		// التحقق من وجود الفئة الجديدة
-		var category models.Category
-		if err := config.DB.Where("id = ?", *req.CategoryID).First(&category).Error; err != nil {
-			utils.NotFoundResponse(c, "Category not found")
-			return
-		}
-		product.CategoryID = *req.CategoryID
-	}
-	if req.Brand != nil {
-		product.Brand = *req.Brand
-	}
-	if req.StockQuantity != nil {
-		product.StockQuantity = *req.StockQuantity
-	}
-	if req.MinStockLevel != nil {
-		product.MinStockLevel = *req.MinStockLevel
-	}
-	if req.ImageURL != nil {
-		product.ImageURL = *req.ImageURL
-	}
-	if req.Images != nil {
-		product.Images = req.Images
-	}
-	if req.IsActive != nil {
-		product.IsActive = *req.IsActive
-	}
-	if req.IsFeatured != nil {
-		product.IsFeatured = *req.IsFeatured
-	}
-	if req.Weight != nil {
-		product.Weight = req.Weight
-	}
-	if req.Dimensions != nil {
-		product.Dimensions = req.Dimensions
-	}
-	if req.Tags != nil {
-		product.Tags = req.Tags
-	}
-	
-	// حقول خاصة بالأدوية
-	if req.ExpiryDate != nil {
-		product.ExpiryDate = req.ExpiryDate
-	}
-	if req.BatchNumber != nil {
-		product.BatchNumber = req.BatchNumber
-	}
-	if req.Manufacturer != nil {
-		product.Manufacturer = req.Manufacturer
-	}
-	if req.RequiresPrescription != nil {
-		product.RequiresPrescription = *req.RequiresPrescription
-	}
-	if req.ActiveIngredient != nil {
-		product.ActiveIngredient = req.ActiveIngredient
-	}
-	if req.DosageForm != nil {
-		product.DosageForm = req.DosageForm
-	}
-	if req.Strength != nil {
-		product.Strength = req.Strength
-	}
-	if req.StorageConditions != nil {
-		product.StorageConditions = req.StorageConditions
-	}
-	if req.SideEffects != nil {
-		product.SideEffects = req.SideEffects
-	}
-	if req.Contraindications != nil {
-		product.Contraindications = req.Contraindications
-	}
-	
-	if err := config.DB.Save(&product).Error; err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to update product", err.Error())
-		return
-	}
-	
-	utils.SuccessResponse(c, "Product updated successfully", product)
+    id := c.Param("id")
+    productUUID, err := uuid.Parse(id)
+    if err != nil {
+        utils.BadRequestResponse(c, "معرّف المنتج غير صالح", err.Error())
+        return
+    }
+
+    // قراءة وتحقق من حقول الطلب
+    body, err := io.ReadAll(c.Request.Body)
+    if err != nil {
+        utils.BadRequestResponse(c, "فشل في قراءة بيانات الطلب", err.Error())
+        return
+    }
+    
+    // التحقق من وجود حقول النشر في الطلب
+    var rawRequest map[string]interface{}
+    if err := json.Unmarshal(body, &rawRequest); err != nil {
+        utils.BadRequestResponse(c, "تنسيق JSON غير صالح", err.Error())
+        return
+    }
+    
+    // التحقق من وجود حقول النشر في الطلب (حتى لو كانت null)
+    if _, exists := rawRequest["published_retail"]; exists {
+        utils.BadRequestResponse(c, 
+            "لا يمكن تعديل حالة النشر من هنا", 
+            "استخدم endpoint خاص للنشر أو الإلغاء")
+        return
+    }
+    if _, exists := rawRequest["published_wholesale"]; exists {
+        utils.BadRequestResponse(c, 
+            "لا يمكن تعديل حالة النشر من هنا", 
+            "استخدم endpoint خاص للنشر أو الإلغاء")
+        return
+    }
+    
+    // إعادة تعيين body للطلب للسماح بالقراءة مرة أخرى
+    c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
+    
+    var req UpdateProductRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequestResponse(c, "بيانات الطلب غير صالحة", err.Error())
+        return
+    }
+    
+    // التحقق من وجود المنتج
+    var product models.Product
+    if err := config.DB.Where("id = ?", productUUID).First(&product).Error; err != nil {
+        if err == gorm.ErrRecordNotFound {
+            utils.NotFoundResponse(c, "المنتج غير موجود")
+        } else {
+            utils.InternalServerErrorResponse(c, "فشل في جلب بيانات المنتج", err.Error())
+        }
+        return
+    }
+    
+    // تحديث الحقول المسموح بها فقط
+    updates := make(map[string]interface{})
+    
+    // الحقول المسموح بتحديثها
+    allowedFields := map[string]bool{
+        "name":                  true,
+        "description":           true,
+        "price":                 true,
+        "discount_price":        true,
+        "sku":                   true,
+        "category_id":           true,
+        "brand":                 true,
+        "stock_quantity":        true,
+        "expiry_date":           true,
+        "image_url":             true,
+        "manufacturer":          true,
+        "active_ingredient":     true,
+        "dosage_form":           true,
+        "strength":              true,
+        "storage_conditions":    true,
+        "side_effects":          true,
+        "contraindications":     true,
+        "is_active":             true,
+        "batch_number":          true,
+    }
+    
+    // تحديث الحقول المسموح بها فقط
+    if req.Name != nil && allowedFields["name"] {
+        updates["name"] = *req.Name
+    }
+    if req.Description != nil && allowedFields["description"] {
+        updates["description"] = *req.Description
+    }
+    if req.Price != nil && allowedFields["price"] {
+        updates["price"] = *req.Price
+    }
+    if req.DiscountPrice != nil && allowedFields["discount_price"] {
+        updates["discount_price"] = req.DiscountPrice
+    }
+    if req.SKU != nil && *req.SKU != product.SKU && allowedFields["sku"] {
+        // التحقق من عدم وجود SKU مكرر
+        var count int64
+        if err := config.DB.Model(&models.Product{}).Where("sku = ? AND id != ?", *req.SKU, product.ID).Count(&count).Error; err != nil {
+            utils.InternalServerErrorResponse(c, "فشل في التحقق من رقم SKU", err.Error())
+            return
+        }
+        if count > 0 {
+            utils.BadRequestResponse(c, "رقم SKU مستخدم مسبقاً", "")
+            return
+        }
+        updates["sku"] = *req.SKU
+    }
+    if req.CategoryID != nil && allowedFields["category_id"] {
+        // التحقق من وجود الفئة
+        var category models.Category
+        if err := config.DB.First(&category, *req.CategoryID).Error; err != nil {
+            if err == gorm.ErrRecordNotFound {
+                utils.NotFoundResponse(c, "الفئة غير موجودة")
+            } else {
+                utils.InternalServerErrorResponse(c, "فشل في التحقق من الفئة", err.Error())
+            }
+            return
+        }
+        updates["category_id"] = *req.CategoryID
+    }
+    if req.Brand != nil && allowedFields["brand"] {
+        updates["brand"] = *req.Brand
+    }
+    if req.StockQuantity != nil && allowedFields["stock_quantity"] {
+        updates["stock_quantity"] = *req.StockQuantity
+    }
+    if req.IsActive != nil && allowedFields["is_active"] {
+        updates["is_active"] = *req.IsActive
+    }
+    if req.ExpiryDate != nil && allowedFields["expiry_date"] {
+        updates["expiry_date"] = req.ExpiryDate
+    }
+    if req.BatchNumber != nil && allowedFields["batch_number"] {
+        updates["batch_number"] = req.BatchNumber
+    }
+    if req.Manufacturer != nil && allowedFields["manufacturer"] {
+        updates["manufacturer"] = req.Manufacturer
+    }
+    if req.ActiveIngredient != nil && allowedFields["active_ingredient"] {
+        updates["active_ingredient"] = req.ActiveIngredient
+    }
+    if req.DosageForm != nil && allowedFields["dosage_form"] {
+        updates["dosage_form"] = req.DosageForm
+    }
+    if req.Strength != nil && allowedFields["strength"] {
+        updates["strength"] = req.Strength
+    }
+    if req.StorageConditions != nil && allowedFields["storage_conditions"] {
+        updates["storage_conditions"] = req.StorageConditions
+    }
+    if req.SideEffects != nil && allowedFields["side_effects"] {
+        updates["side_effects"] = req.SideEffects
+    }
+    if req.Contraindications != nil && allowedFields["contraindications"] {
+        updates["contraindications"] = req.Contraindications
+    }
+    
+    // تحديث الحقول المعدلة فقط
+    if len(updates) > 0 {
+        updates["updated_at"] = time.Now()
+        if err := config.DB.Model(&product).Updates(updates).Error; err != nil {
+            utils.InternalServerErrorResponse(c, "فشل في تحديث المنتج", err.Error())
+            return
+        }
+    }
+    
+    // جلب بيانات المنتج المحدثة
+    var updatedProduct models.Product
+    if err := config.DB.Preload("Category").First(&updatedProduct, product.ID).Error; err != nil {
+        utils.InternalServerErrorResponse(c, "فشل في جلب بيانات المنتج المحدثة", err.Error())
+        return
+    }
+    
+    utils.SuccessResponse(c, "تم تحديث المنتج بنجاح", updatedProduct)
 }
 
 // DeleteProduct حذف منتج (Admin)
@@ -290,3 +397,218 @@ func DeleteProduct(c *gin.Context) {
 	utils.SuccessResponse(c, "Product deleted successfully", nil)
 }
 
+// ProductStatusRequest بنية طلب تغيير حالة المنتج
+type ProductStatusRequest struct {
+	Type     string `json:"type" binding:"required"`
+	Action   string `json:"action" binding:"required"`
+}
+
+// UpdateProductStatus handles both activation and deactivation of products
+// @Summary تفعيل/تعطيل منتج
+// @Description تغيير حالة المنتج (نشط/غير نشط) في واجهة البيع بالجملة أو التجزئة
+// @Tags المنتجات - إدارة
+// @Accept json
+// @Produce json
+// @Param id path string true "معرف المنتج"
+// @Param input body ProductStatusRequest true "بيانات الطلب"
+// @Security ApiKeyAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Router /admin/products/{id}/status [patch]
+func UpdateProductStatus(c *gin.Context) {
+	// Get user ID and role from context (set by auth middleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedResponse(c, "معلومات المستخدم غير متوفرة")
+		return
+	}
+
+	// Log the action attempt
+	log.Printf("[DEBUG] User %s is attempting to change product status", userID)
+
+	// Parse product ID
+	id := c.Param("id")
+	productUUID, err := uuid.Parse(id)
+	if err != nil {
+		log.Printf("[ERROR] Invalid product ID '%s': %v", id, err)
+		utils.BadRequestResponse(c, "معرّف المنتج غير صالح", err.Error())
+		return
+	}
+
+	// Debug: Log headers
+	headers := c.Request.Header
+	log.Printf("[DEBUG] Request Headers: %+v", headers)
+
+	// Read the raw request body for debugging
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Printf("[ERROR] Failed to read request body: %v", err)
+		utils.InternalServerErrorResponse(c, "فشل في قراءة بيانات الطلب", err.Error())
+		return
+	}
+
+	// Log the raw request body
+	log.Printf("[DEBUG] Raw request body: %s", string(bodyBytes))
+
+	// Restore the request body for binding
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Parse request body
+	var req ProductStatusRequest
+	
+	// First, try to bind JSON normally
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[ERROR] Failed to bind JSON: %v", err)
+		log.Printf("[DEBUG] Request Content-Type: %s", c.GetHeader("Content-Type"))
+		log.Printf("[DEBUG] Request body that failed to bind: %s", string(bodyBytes))
+		
+		// If binding fails, try to manually parse JSON
+		if jsonErr := json.Unmarshal(bodyBytes, &req); jsonErr != nil {
+			log.Printf("[ERROR] Failed to manually parse JSON: %v", jsonErr)
+			
+			// Try to get more detailed error information
+			var syntaxErr *json.SyntaxError
+			if errors.As(jsonErr, &syntaxErr) {
+				errMsg := fmt.Sprintf("خطأ في تنسيق JSON: %v", syntaxErr.Error())
+				utils.BadRequestResponse(c, "تنسيق JSON غير صالح", errMsg)
+				return
+			}
+			
+			utils.BadRequestResponse(c, "بيانات الطلب غير صالحة", jsonErr.Error())
+			return
+		}
+	}
+
+	log.Printf("[DEBUG] Successfully parsed request: %+v", req)
+
+	// Normalize and validate type and action
+	req.Type = strings.TrimSpace(strings.ToLower(req.Type))
+	req.Action = strings.TrimSpace(strings.ToLower(req.Action))
+
+	log.Printf("[DEBUG] After normalization - Type: '%s', Action: '%s'", req.Type, req.Action)
+
+	// Validate type
+	if req.Type != "retail" && req.Type != "wholesale" {
+		errMsg := fmt.Sprintf("نوع المنتج غير صالح: '%s'، يجب أن يكون إما retail أو wholesale", req.Type)
+		log.Printf("[VALIDATION ERROR] %s", errMsg)
+		utils.BadRequestResponse(c, "نوع المنتج غير صالح", errMsg)
+		return
+	}
+
+	// Validate action
+	if req.Action != "activate" && req.Action != "deactivate" {
+		errMsg := fmt.Sprintf("الإجراء غير صالح: '%s'، يجب أن يكون الإجراء إما activate أو deactivate", req.Action)
+		log.Printf("[VALIDATION ERROR] %s", errMsg)
+		utils.BadRequestResponse(c, "الإجراء غير صالح", errMsg)
+		return
+	}
+
+	// Start database transaction
+	tx := config.DB.Begin()
+	if tx.Error != nil {
+		utils.InternalServerErrorResponse(c, "فشل في بدء المعاملة", tx.Error.Error())
+		return
+	}
+
+	// Get the product with row lock to prevent concurrent updates
+	var product models.Product
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&product, productUUID).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundResponse(c, "المنتج غير موجود")
+			return
+		}
+		utils.InternalServerErrorResponse(c, "فشل في جلب بيانات المنتج", err.Error())
+		return
+	}
+
+	// Check current status and requested action
+	isActivating := req.Action == "activate"
+	isWholesale := req.Type == "wholesale"
+	
+	// Check if the product is already in the requested state
+	var currentStatus bool
+	var statusField string
+	if isWholesale {
+		currentStatus = product.PublishedWholesale
+		statusField = "published_wholesale"
+	} else {
+		currentStatus = product.PublishedRetail
+		statusField = "published_retail"
+	}
+
+	if currentStatus == isActivating {
+		tx.Rollback()
+		statusMsg := "منشور"
+		if !isActivating {
+			statusMsg = "غير منشور"
+		}
+		
+		utils.SuccessResponse(c, "حالة المنتج لم تتغير", gin.H{
+			"success": true,
+			"already_" + req.Action + "d": true,
+			"message":  "المنتج " + statusMsg + " مسبقاً في واجهة " + map[bool]string{true: "الجملة", false: "التجزئة"}[isWholesale],
+		})
+		return
+	}
+
+	// Update the appropriate published status
+	updateData := map[string]interface{}{
+		statusField:      isActivating,
+		"updated_at":     time.Now(),
+	}
+
+	// Save the changes
+	if err := tx.Model(&product).Updates(updateData).Error; err != nil {
+		tx.Rollback()
+		utils.InternalServerErrorResponse(c, "فشل في تحديث حالة المنتج", err.Error())
+		return
+	}
+
+	// Commit the transaction
+	if err := tx.Commit().Error; err != nil {
+		utils.InternalServerErrorResponse(c, "فشل في حفظ التغييرات", err.Error())
+		return
+	}
+
+	// Log the successful status change
+	action := "نشر"
+	if !isActivating {
+		action = "إيقاف نشر"
+	}
+	
+	log.Printf("User %s has %s product %s in %s", 
+		userID, 
+		action,
+		product.Name,
+		map[bool]string{true: "wholesale", false: "retail"}[isWholesale],
+	)
+
+	// Refresh product data
+	if err := config.DB.First(&product, productUUID).Error; err != nil {
+		log.Printf("Warning: Failed to refresh product data: %v", err)
+	}
+
+	// Return success response
+	statusMsg := "تم النشر بنجاح"
+	if !isActivating {
+		statusMsg = "تم إيقاف النشر بنجاح"
+	}
+
+	utils.SuccessResponse(c, statusMsg, gin.H{
+		"success": true,
+		"message": statusMsg + " في واجهة " + map[bool]string{true: "الجملة", false: "التجزئة"}[isWholesale],
+		"product": gin.H{
+			"id":                  product.ID,
+			"name":                product.Name,
+			"published_retail":    product.PublishedRetail,
+			"published_wholesale": product.PublishedWholesale,
+			"updated_at":          product.UpdatedAt,
+		},
+	})
+}
+
+	

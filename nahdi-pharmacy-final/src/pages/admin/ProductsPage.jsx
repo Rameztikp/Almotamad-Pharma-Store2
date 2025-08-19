@@ -13,22 +13,14 @@ const ProductsPage = () => {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        // TODO: Replace with actual API call
-        // const response = await api.get('/api/admin/products');
-        // setProducts(response.data);
-        
-        // Mock data for now
-        const mockProducts = Array(15).fill(0).map((_, i) => ({
-          id: i + 1,
-          name: `منتج تجريبي ${i + 1}`,
-          sku: `SKU-${1000 + i}`,
-          price: (Math.random() * 100).toFixed(2),
-          stock: Math.floor(Math.random() * 100),
-          status: Math.random() > 0.5 ? 'متوفر' : 'غير متوفر',
-          category: 'فئة تجريبية',
-        }));
-        
-        setProducts(mockProducts);
+        const token = localStorage.getItem('adminToken');
+        const response = await fetch('http://localhost:8080/api/v1/admin/products', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        setProducts(data.products);
         setLoading(false);
       } catch (error) {
         console.error('Error fetching products:', error);
