@@ -78,21 +78,12 @@ func ConnectDatabase() {
 	// Setup Cloudinary
 	SetupCloudinary()
 	
-	var dsn string
-	
-	// Try DATABASE_URL first (Railway format)
-	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
-		dsn = databaseURL
-		log.Println("Using DATABASE_URL for connection")
-	} else {
-		// Fallback to individual environment variables
-		config := GetDatabaseConfig()
-		dsn = fmt.Sprintf(
-			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Riyadh",
-			config.Host, config.User, config.Password, config.DBName, config.Port, config.SSLMode,
-		)
-		log.Println("Using individual DB variables for connection")
+	// Use DATABASE_URL from Railway
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL environment variable is required")
 	}
+	log.Println("Using DATABASE_URL for connection")
 	
 	// Enable SQL query logging
 	newLogger := logger.New(
