@@ -2,14 +2,13 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,48 +16,11 @@ import (
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
 
+	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
-
-// UploadImages رفع صور المنتجات
-func UploadImages(c *gin.Context) {
-	// Get the files from the request
-	files, err := c.FormFile("images")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "No files were uploaded",
-		})
-		return
-	}
-
-	// Create uploads directory if it doesn't exist
-	uploadDir := "uploads"
-	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
-		os.Mkdir(uploadDir, 0755)
-	}
-
-	// Generate a unique filename
-	fileExtension := filepath.Ext(files.Filename)
-	filename := uuid.New().String() + fileExtension
-	
-	// Save the file
-	filePath := filepath.Join(uploadDir, filename)
-	if err := c.SaveUploadedFile(files, filePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to save uploaded file",
-		})
-		return
-	}
-
-	// Return the uploaded file information
-	c.JSON(http.StatusOK, gin.H{
-		"filename": filename,
-		"path":     "/uploads/" + filename,
-		"size":     files.Size,
-	})
-}
 
 // CreateProductRequest بنية طلب إنشاء منتج جديد
 type CreateProductRequest struct {
@@ -68,7 +30,7 @@ type CreateProductRequest struct {
 	Price               float64   `json:"price" binding:"required,gt=0"`
 	DiscountPrice       *float64  `json:"discount_price,omitempty"`
 	SKU                 string    `json:"sku" binding:"required"`
-	CategoryID          uuid.UUID `json:"category_id" binding:"required"`
+	CategoryID          string    `json:"category_id" binding:"required"`
 	Brand               string    `json:"brand"`
 	StockQuantity       int       `json:"stock_quantity" binding:"required,min=0"`
 	MinStockLevel       int       `json:"min_stock_level" binding:"min=0"`
@@ -129,13 +91,23 @@ type UpdateProductRequest struct {
 func CreateProduct(c *gin.Context) {
 	var req CreateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[ERROR] Failed to bind JSON in CreateProduct: %v", err)
 		utils.BadRequestResponse(c, "Invalid request data", err.Error())
+		return
+	}
+	
+	log.Printf("[DEBUG] CreateProduct request: %+v", req)
+	
+	// Parse CategoryID string to UUID
+	categoryUUID, err := uuid.Parse(req.CategoryID)
+	if err != nil {
+		utils.BadRequestResponse(c, "Invalid category ID format", err.Error())
 		return
 	}
 	
 	// التحقق من وجود الفئة
 	var category models.Category
-	if err := config.DB.Where("id = ?", req.CategoryID).First(&category).Error; err != nil {
+	if err := config.DB.Where("id = ?", categoryUUID).First(&category).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFoundResponse(c, "Category not found")
 		} else {
@@ -161,7 +133,7 @@ func CreateProduct(c *gin.Context) {
 		Price:               req.Price,
 		DiscountPrice:       req.DiscountPrice,
 		SKU:                 req.SKU,
-		CategoryID:          req.CategoryID,
+		CategoryID:          categoryUUID,
 		Brand:               req.Brand,
 		StockQuantity:       req.StockQuantity,
 		MinStockLevel:       req.MinStockLevel,
@@ -188,7 +160,9 @@ func CreateProduct(c *gin.Context) {
 		product.IsActive = *req.IsActive
 	}
 	
+	log.Printf("[DEBUG] About to create product: %+v", product)
 	if err := config.DB.Create(&product).Error; err != nil {
+		log.Printf("[ERROR] Failed to create product in database: %v", err)
 		utils.InternalServerErrorResponse(c, "Failed to create product", err.Error())
 		return
 	}
@@ -268,6 +242,7 @@ func UpdateProduct(c *gin.Context) {
         "stock_quantity":        true,
         "expiry_date":           true,
         "image_url":             true,
+        "images":                true, // السماح بتحديث الصور المتعددة
         "manufacturer":          true,
         "active_ingredient":     true,
         "dosage_form":           true,
@@ -353,6 +328,12 @@ func UpdateProduct(c *gin.Context) {
     }
     if req.Contraindications != nil && allowedFields["contraindications"] {
         updates["contraindications"] = req.Contraindications
+    }
+    if req.ImageURL != nil && allowedFields["image_url"] {
+        updates["image_url"] = *req.ImageURL
+    }
+    if req.Images != nil && allowedFields["images"] {
+        updates["images"] = req.Images
     }
     
     // تحديث الحقول المعدلة فقط
@@ -611,4 +592,48 @@ func UpdateProductStatus(c *gin.Context) {
 	})
 }
 
-	
+// UploadProductImage handles image uploads for products to Cloudinary. Admin only.
+func UploadProductImage(c *gin.Context) {
+	log.Print("[INFO] Product image upload request received")
+
+	// Check if Cloudinary is configured
+	if config.Cld == nil {
+		log.Print("[ERROR] Cloudinary is not configured")
+		utils.InternalServerErrorResponse(c, "Cloudinary is not configured", "")
+		return
+	}
+
+	file, err := c.FormFile("image")
+	if err != nil {
+		log.Printf("[ERROR] Image not provided in form: %v", err)
+		utils.BadRequestResponse(c, "Image not provided", err.Error())
+		return
+	}
+	log.Printf("[INFO] Image file received: %s (size: %d bytes)", file.Filename, file.Size)
+
+	// Open the uploaded file
+	src, err := file.Open()
+	if err != nil {
+		log.Printf("[ERROR] Failed to open uploaded file: %v", err)
+		utils.InternalServerErrorResponse(c, "Failed to open uploaded file", err.Error())
+		return
+	}
+	defer src.Close()
+
+	// Upload the file to Cloudinary
+	uploadParams := uploader.UploadParams{
+		Folder: "pharmacy-backend/products", // Organize product uploads
+	}
+	log.Print("[INFO] Uploading product image to Cloudinary...")
+
+	uploadResult, err := config.Cld.Upload.Upload(context.Background(), src, uploadParams)
+	if err != nil {
+		log.Printf("[ERROR] Failed to upload image to Cloudinary: %v", err)
+		utils.InternalServerErrorResponse(c, "Failed to upload image to Cloudinary", err.Error())
+		return
+	}
+	log.Printf("[INFO] Image uploaded successfully: %s", uploadResult.SecureURL)
+
+	// Return the secure URL of the uploaded image
+	c.JSON(http.StatusOK, gin.H{"image_url": uploadResult.SecureURL})
+}

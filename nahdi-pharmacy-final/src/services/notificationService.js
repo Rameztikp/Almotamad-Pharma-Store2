@@ -113,20 +113,63 @@ const subscribe = (cb) => {
 };
 
 const isAuthenticated = () => {
-  return !!(localStorage.getItem('client_auth_token') || localStorage.getItem('authToken') || localStorage.getItem('token'));
+  // Check for tokens in localStorage (for admin) or user data (for HttpOnly cookie auth)
+  const hasToken = !!(localStorage.getItem('client_auth_token') || localStorage.getItem('authToken') || localStorage.getItem('token') || localStorage.getItem('admin_token'));
+  const hasUserData = !!(localStorage.getItem('client_user_data') || localStorage.getItem('adminData'));
+  return hasToken || hasUserData;
 };
 
 // --- SSE client ---
 const startSSE = () => {
-  if (sse) return; // already running
-  const token = getClientToken();
-  if (!token) return;
+  // Close existing connection if any
+  if (sse) {
+    try { sse.close(); } catch {}
+    sse = null;
+  }
 
+  // Get fresh token
+  const token = getClientToken();
+  if (!token) {
+    console.warn('No auth token available for SSE connection');
+    return;
+  }
+
+  // Construct SSE URL with cache-busting parameter
   const base = getApiBase();
-  const url = `${base}/notifications/stream?token=${encodeURIComponent(token)}&_t=${Date.now()}`;
+  const url = new URL(`${base}/api/v1/notifications/stream`);
+  url.searchParams.append('_t', Date.now());
+  
+  console.log('🔌 Connecting to SSE endpoint:', url.toString());
 
   try {
-    sse = new EventSource(url, { withCredentials: true });
+    // Create new EventSource with error handling
+    sse = new EventSource(url, { 
+      withCredentials: true,
+      // Don't use the default EventSource, use the native one
+      // This helps with some environments that might polyfill it incorrectly
+      // @ts-ignore - Some environments might not have this type
+      fetch: window.fetch.bind(window)
+    });
+    
+    // Set a timeout to detect connection issues
+    const connectionTimer = setTimeout(() => {
+      if (sse && sse.readyState === sse.CONNECTING) {
+        console.warn('SSE connection is taking too long, will retry...');
+        sse.close();
+        sse = null;
+        setTimeout(startSSE, 2000);
+      }
+    }, 5000);
+    
+    // Clean up timer on successful connection
+    sse.onopen = () => {
+      clearTimeout(connectionTimer);
+      console.log('✅ SSE connection established successfully');
+      // Reset backoff on successful connection
+      sseBackoffMs = 2000;
+      // Stop polling since we have SSE
+      stopOrderPolling();
+    };
 
     sse.onopen = () => {
       // Connected -> prefer SSE over polling
@@ -182,11 +225,20 @@ const startSSE = () => {
             });
             break;
           }
+          case 'wholesale_request_submitted': {
+            addNotification({
+              type: 'wholesale_submitted',
+              title: 'تم تقديم طلب ترقية حساب الجملة',
+              message: payload?.message || 'تم تقديم طلبك بنجاح وهو الآن قيد المراجعة',
+              meta: { ...payload },
+            });
+            break;
+          }
           case 'wholesale_approved': {
             addNotification({
               type: 'wholesale_approved',
               title: 'تمت الموافقة على ترقية حساب الجملة',
-              message: `رقم الطلب: ${payload?.request_id || ''}`.trim(),
+              message: payload?.message || 'تهانينا! تمت الموافقة على طلب ترقية حساب الجملة الخاص بك',
               meta: { ...payload },
             });
             break;
@@ -195,7 +247,7 @@ const startSSE = () => {
             addNotification({
               type: 'wholesale_rejected',
               title: 'تم رفض طلب ترقية حساب الجملة',
-              message: payload?.rejection_reason ? `السبب: ${payload.rejection_reason}` : '',
+              message: payload?.message || (payload?.rejection_reason ? `السبب: ${payload.rejection_reason}` : 'تم رفض طلب ترقية حساب الجملة الخاص بك'),
               meta: { ...payload },
             });
             break;
@@ -217,17 +269,30 @@ const startSSE = () => {
       }
     };
 
-    sse.onerror = () => {
-      if (isDev) console.warn('⚠️ SSE error, will reconnect');
-      try { sse.close(); } catch {}
-      sse = null;
-      // ensure polling runs while reconnecting
-      if (!pollingIntervalId && isAuthenticated()) startOrderPolling();
+    sse.onerror = (error) => {
+      clearTimeout(connectionTimer);
+      
+      if (sse) {
+        console.error('SSE connection error:', error);
+        try { sse.close(); } catch {}
+        sse = null;
+      }
+      
+      // Start polling as fallback
+      if (isAuthenticated() && !pollingIntervalId) {
+        console.log('🔄 Starting polling as fallback');
+        startOrderPolling();
+      }
+      
+      // Schedule reconnection with exponential backoff
       if (!sseReconnectTimer) {
-        const delay = Math.min(sseBackoffMs, 30000);
+        const delay = Math.min(sseBackoffMs, 30000); // Max 30s delay
+        console.log(`⏳ Will attempt to reconnect in ${delay}ms...`);
+        
         sseReconnectTimer = setTimeout(() => {
           sseReconnectTimer = null;
-          sseBackoffMs *= 2;
+          sseBackoffMs = Math.min(sseBackoffMs * 1.5, 30000); // Increase backoff
+          console.log('🔄 Attempting to reconnect SSE...');
           startSSE();
         }, delay);
       }
@@ -362,12 +427,116 @@ const init = () => {
   }
 };
 
+// API methods for persistent notifications
+const apiRequest = async (endpoint, options = {}) => {
+  const token = getClientToken();
+  const base = getApiBase();
+  
+  try {
+    const url = endpoint.startsWith('http') ? endpoint : `${base}${endpoint}`;
+    
+    console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    };
+    
+    // Only add Authorization header if we have a token
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include', // Important for HttpOnly cookies
+    });
+    
+    console.log(`🔔 API Response: ${response.status} ${response.statusText} for ${endpoint}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API Error (${response.status}):`, errorText);
+      
+      // Handle 401 Unauthorized
+      if (response.status === 401) {
+        // Try to refresh token if possible
+        if (endpoint !== '/auth/refresh') {
+          console.log('🔑 Attempting to refresh token...');
+          try {
+            const refreshResponse = await fetch(`${base}/auth/refresh`, {
+              method: 'POST',
+              credentials: 'include',
+            });
+            
+            if (refreshResponse.ok) {
+              console.log('✅ Token refreshed, retrying original request');
+              return apiRequest(endpoint, options);
+            }
+          } catch (refreshError) {
+            console.error('Failed to refresh token:', refreshError);
+          }
+        }
+        
+        // If we get here, refresh failed or not possible
+        window.dispatchEvent(new CustomEvent('authStateChanged', {
+          detail: { isAuthenticated: false }
+        }));
+        
+        throw new Error('Session expired. Please log in again.');
+      }
+      
+      throw new Error(`API request failed: ${response.status} - ${errorText}`);
+    }
+    
+    // For 204 No Content responses
+    if (response.status === 204) {
+      return null;
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('API request failed:', error);
+    throw error;
+  }
+};
+
+const getStoredNotifications = async (limit = 20, unreadOnly = false) => {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (unreadOnly) params.append('unread', 'true');
+  
+  return apiRequest(`/notifications?${params}`);
+};
+
+const markStoredAsRead = async (notificationId) => {
+  return apiRequest(`/notifications/${notificationId}/read`, {
+    method: 'PUT',
+  });
+};
+
+const markAllStoredAsRead = async () => {
+  return apiRequest('/notifications/read-all', {
+    method: 'PUT',
+  });
+};
+
+const getUnreadCount = async () => {
+  return apiRequest('/notifications/unread-count');
+};
+
 const notificationService = {
   init,
   addNotification,
-  getNotifications,
-  markAllRead,
-  markRead,
+  getNotifications: getStoredNotifications, // Use API method as primary
+  getLocalNotifications: getNotifications, // Keep local method available
+  markAllRead: markAllStoredAsRead, // Use API method as primary
+  markAllLocalRead: markAllRead, // Keep local method available
+  markRead: markStoredAsRead, // Use API method as primary
+  markLocalRead: markRead, // Keep local method available
+  markAsRead: markStoredAsRead,
+  markAllAsRead: markAllStoredAsRead,
+  getUnreadCount,
   subscribe,
 };
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -82,6 +83,16 @@ func GetProducts(c *gin.Context) {
 	}
 	
 	pagination := utils.CalculatePagination(page, limit, total)
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	utils.PaginatedSuccessResponse(c, "Products retrieved successfully", products, pagination)
 }
 
@@ -133,6 +144,16 @@ func GetAdminProducts(c *gin.Context) {
 	}
 
 	// Return response
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"products": products,
 		"total":    total,
@@ -164,6 +185,14 @@ func GetProduct(c *gin.Context) {
 		return
 	}
 	
+		// Convert image URLs to absolute URLs
+	product.ImageURL = utils.ToAbsoluteURL(product.ImageURL)
+	if product.Images != nil {
+		for j, img := range product.Images {
+			product.Images[j] = utils.ToAbsoluteURL(img)
+		}
+	}
+
 	utils.SuccessResponse(c, "Product retrieved successfully", product)
 }
 
@@ -187,6 +216,16 @@ func GetFeaturedProducts(c *gin.Context) {
 		return
 	}
 	
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	utils.SuccessResponse(c, "Featured products retrieved successfully", products)
 }
 
@@ -235,6 +274,16 @@ func SearchProducts(c *gin.Context) {
 	}
 	
 	pagination := utils.CalculatePagination(page, limit, total)
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	utils.PaginatedSuccessResponse(c, "Search results retrieved successfully", products, pagination)
 }
 
@@ -293,6 +342,16 @@ func GetProductsByCategory(c *gin.Context) {
 	
 	pagination := utils.CalculatePagination(page, limit, total)
 	
+	// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	response := gin.H{
 		"category": category,
 		"products": products,
@@ -315,6 +374,16 @@ func GetLowStockProducts(c *gin.Context) {
 		return
 	}
 	
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	utils.SuccessResponse(c, "Low stock products retrieved successfully", products)
 }
 
@@ -332,6 +401,16 @@ func GetExpiringProducts(c *gin.Context) {
 		return
 	}
 	
+		// Convert image URLs to absolute URLs
+	for i := range products {
+		products[i].ImageURL = utils.ToAbsoluteURL(products[i].ImageURL)
+		if products[i].Images != nil {
+			for j, img := range products[i].Images {
+				products[i].Images[j] = utils.ToAbsoluteURL(img)
+			}
+		}
+	}
+
 	utils.SuccessResponse(c, "Expiring products retrieved successfully", products)
 }
 

@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"fmt"
-	"strconv"
-	"time"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
+	"pharmacy-backend/services"
 	"pharmacy-backend/utils"
-	
+	"strconv"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -142,6 +143,54 @@ func UpdateOrderStatus(c *gin.Context) {
 	if err := config.DB.Create(&tracking).Error; err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to add order tracking", err.Error())
 		return
+	}
+
+	// تحديد نوع الطلب (تجزئة أم جملة) بناءً على المنتجات
+	var orderItems []models.OrderItem
+	if err := config.DB.Preload("Product").Where("order_id = ?", order.ID).Find(&orderItems).Error; err == nil {
+		isWholesaleOrder := false
+		for _, item := range orderItems {
+			if item.Product.Type == models.ProductTypeWholesale {
+				isWholesaleOrder = true
+				break
+			}
+		}
+		
+		// إنشاء إشعار للإدارة عن تحديث الطلب
+		notificationService := services.NewNotificationService()
+		var notificationType models.NotificationType
+		var title, message string
+		
+		if isWholesaleOrder {
+			notificationType = models.NotificationTypeAdminWholesaleOrder
+			title = "تحديث طلب جملة"
+			message = fmt.Sprintf("تم تحديث طلب الجملة رقم %s إلى حالة: %s", order.ID.String()[:8], req.Status)
+		} else {
+			notificationType = models.NotificationTypeAdminOrderUpdated
+			title = "تحديث طلب تجزئة"
+			message = fmt.Sprintf("تم تحديث طلب التجزئة رقم %s إلى حالة: %s", order.ID.String()[:8], req.Status)
+		}
+		
+		adminMetadata := map[string]interface{}{
+			"order_id":     order.ID.String(),
+			"user_id":      order.UserID.String(),
+			"old_status":   order.Status, // الحالة السابقة
+			"new_status":   req.Status,
+			"order_type":   map[bool]string{true: "wholesale", false: "retail"}[isWholesaleOrder],
+			"updated_at":   time.Now(),
+		}
+		
+		err = notificationService.CreateAdminNotification(
+			notificationType,
+			title,
+			message,
+			adminMetadata,
+			&order.ID,
+		)
+		if err != nil {
+			// لا نوقف العملية إذا فشل إنشاء الإشعار
+			fmt.Printf("⚠️ فشل في إنشاء إشعار الإدارة لتحديث الطلب: %v", err)
+		}
 	}
 
 	// بث إشعار تغيير حالة الطلب للمستخدم عبر SSE

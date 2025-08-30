@@ -1,15 +1,16 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
+	"pharmacy-backend/models"
+	"pharmacy-backend/services"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"pharmacy-backend/utils"
 )
 
 // SSE event payload
@@ -28,11 +29,20 @@ type connection struct {
 type notifierHub struct {
 	mu          sync.RWMutex
 	connections map[uuid.UUID]map[*connection]struct{}
+	clients     map[uuid.UUID]chan sseEvent
+	fcmHandler  *FCMHandler
 }
 
-var Notifier = &notifierHub{
-	connections: make(map[uuid.UUID]map[*connection]struct{}),
+// NewNotifier creates a new notifier instance with FCM support
+func NewNotifier(fcmHandler *FCMHandler) *notifierHub {
+	return &notifierHub{
+		connections: make(map[uuid.UUID]map[*connection]struct{}),
+		clients:     make(map[uuid.UUID]chan sseEvent),
+		fcmHandler:  fcmHandler,
+	}
 }
+
+var Notifier = NewNotifier(nil)
 
 // addConnection registers a connection for a user
 func (h *notifierHub) addConnection(userID uuid.UUID, conn *connection) {
@@ -56,52 +66,131 @@ func (h *notifierHub) removeConnection(userID uuid.UUID, conn *connection) {
 	}
 }
 
+// RegisterClient adds a new client to the notifier
+func (h *notifierHub) RegisterClient(userID uuid.UUID, clientChan chan sseEvent) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clients[userID] = clientChan
+	log.Printf("Client registered for user: %s", userID.String())
+}
+
+// UnregisterClient removes a client from the notifier
+func (h *notifierHub) UnregisterClient(userID uuid.UUID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.clients[userID]; ok {
+		delete(h.clients, userID)
+		log.Printf("Client unregistered for user: %s", userID.String())
+	}
+}
+
 // BroadcastToUser sends an event payload to all active connections of the user
 func (h *notifierHub) BroadcastToUser(userID uuid.UUID, event string, payload interface{}) {
 	h.mu.RLock()
-	conns := h.connections[userID]
-	h.mu.RUnlock()
-	if len(conns) == 0 {
-		return
-	}
-	msg := sseEvent{Event: event, Payload: payload}
-	b, err := json.Marshal(msg)
+	defer h.mu.RUnlock()
+
+	// Store notification in database for offline users
+	notification, err := h.storeNotificationInDB(userID, event, payload)
 	if err != nil {
-		log.Printf("❌ SSE marshal error: %v", err)
-		return
+		log.Printf("❌ Failed to store notification in DB: %v", err)
 	}
-	for conn := range conns {
+
+	// Send to SSE clients
+	if clients, ok := h.clients[userID]; ok {
 		select {
-		case conn.ch <- string(b):
+		case clients <- sseEvent{
+			Event:   event,
+			Payload: payload,
+		}:
 		default:
-			// slow consumer; drop
+			log.Printf("❌ Could not send notification to client %s: channel full", userID)
+		}
+	}
+
+	// Send to FCM if available
+	if notification != nil && h.fcmHandler != nil {
+		if err := h.fcmHandler.SendPushNotification(userID.String(), notification); err != nil {
+			log.Printf("❌ Failed to send FCM notification: %v", err)
 		}
 	}
 }
 
+// storeNotificationInDB stores notification in database for offline users and returns the created notification
+func (h *notifierHub) storeNotificationInDB(userID uuid.UUID, event string, payload interface{}) (*models.Notification, error) {
+	notificationService := services.NewNotificationService()
+
+	var title, message string
+	var notificationType models.NotificationType
+	var orderIDPtr *uuid.UUID
+
+	// Extract order ID from payload if it exists
+	if payloadMap, ok := payload.(map[string]interface{}); ok {
+		if orderIDStr, exists := payloadMap["order_id"]; exists {
+			if parsedID, err := uuid.Parse(orderIDStr.(string)); err == nil {
+				orderIDPtr = &parsedID
+			}
+		}
+	}
+
+	// Map event types to notification types and messages
+	switch event {
+	case "wholesale_approved":
+		notificationType = models.NotificationTypeWholesaleApproved
+		title = "تمت الموافقة على ترقية حساب الجملة"
+		message = "تهانينا! تمت الموافقة على طلب ترقية حساب الجملة الخاص بك"
+	case "wholesale_rejected":
+		notificationType = models.NotificationTypeWholesaleRejected
+		title = "تم رفض طلب ترقية حساب الجملة"
+		message = "تم رفض طلب ترقية حساب الجملة الخاص بك"
+		if payloadMap, ok := payload.(map[string]interface{}); ok {
+			if reason, exists := payloadMap["rejection_reason"]; exists && reason != nil {
+				message = "السبب: " + reason.(string)
+			}
+		}
+	case "order_created":
+		notificationType = models.NotificationTypeOrderCreated
+		title = "تم إنشاء الطلب بنجاح"
+		message = "تم إنشاء طلبك بنجاح"
+		if payloadMap, ok := payload.(map[string]interface{}); ok {
+			if orderID, exists := payloadMap["order_id"]; exists && orderID != nil {
+				message = "رقم الطلب: " + orderID.(string)
+			}
+		}
+	case "order_status_updated":
+		notificationType = models.NotificationTypeOrderUpdated
+		title = "تحديث حالة الطلب"
+		message = "تم تحديث حالة طلبك"
+		if payloadMap, ok := payload.(map[string]interface{}); ok {
+			if status, exists := payloadMap["new_status"]; exists && status != nil {
+				message = "تم تغيير الحالة إلى: " + status.(string)
+			}
+		}
+	default:
+		notificationType = models.NotificationTypeGeneral
+		title = "إشعار جديد"
+		message = "لديك إشعار جديد"
+	}
+
+	createdNotification, err := notificationService.CreateNotification(userID, notificationType, title, message, payload, orderIDPtr)
+	if err != nil {
+		log.Printf("❌ خطأ في حفظ الإشعار في قاعدة البيانات: %v", err)
+		return nil, err
+	}
+	return createdNotification, nil
+}
+
 // NotificationsStream is the SSE endpoint: GET /api/v1/notifications/stream
 func NotificationsStream(c *gin.Context) {
-	// Authenticate using Authorization header or token query param
-	token := c.GetHeader("Authorization")
-	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
-		token = token[7:]
-	}
-	if token == "" {
-		token = c.Query("token")
-	}
-	if token == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	// Get user ID from context (set by JWTAuth middleware)
+	userIDValue, exists := c.Get("userID")
+	if !exists {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	claims, err := utils.VerifyJWT(token)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
-	userIDStr, _ := claims["user_id"].(string)
-	userUUID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid user"})
+
+	userUUID, ok := userIDValue.(uuid.UUID)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type in context"})
 		return
 	}
 
@@ -114,51 +203,41 @@ func NotificationsStream(c *gin.Context) {
 	h.Set("Access-Control-Allow-Origin", "http://localhost:5173")
 	h.Set("Access-Control-Allow-Credentials", "true")
 
-	flusher, ok := w.(http.Flusher)
+	_, ok = w.(http.Flusher)
 	if !ok {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Streaming unsupported"})
 		return
 	}
 
-	conn := &connection{ch: make(chan string, 16), lastPing: time.Now()}
-	Notifier.addConnection(userUUID, conn)
+	// Register the client
+	clientChan := make(chan sseEvent)
+	Notifier.RegisterClient(userUUID, clientChan)
+
+	// Unregister the client on disconnect
 	defer func() {
-		Notifier.removeConnection(userUUID, conn)
-		close(conn.ch)
+		Notifier.UnregisterClient(userUUID)
+		close(clientChan)
+		log.Printf("SSE client disconnected for user %s", userUUID.String())
 	}()
 
-	// Initial hello event
-	hello := sseEvent{Event: "connected", Payload: gin.H{"user_id": userUUID.String(), "ts": time.Now().Unix()}}
-	if b, err := json.Marshal(hello); err == nil {
-		w.Write([]byte("event: message\n"))
-		w.Write([]byte("data: "))
-		w.Write(b)
-		w.Write([]byte("\n\n"))
-		flusher.Flush()
-	}
+	log.Printf("SSE client connected for user %s", userUUID.String())
 
-	// Heartbeat ticker
-	ticker := time.NewTicker(25 * time.Second)
-	defer ticker.Stop()
+	// Send a welcome message
+	c.SSEvent("welcome", gin.H{
+		"message": "مرحباً بك في نظام الإشعارات الفوري",
+	})
 
-	c.Request.Context().Done()
-
+	// Keep the connection alive
 	for {
 		select {
-		case msg, ok := <-conn.ch:
-			if !ok {
-				return
+		case event := <-clientChan:
+			c.SSEvent(event.Event, event.Payload)
+			// Flush the writer to ensure the message is sent immediately
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
 			}
-			w.Write([]byte("event: message\n"))
-			w.Write([]byte("data: "))
-			w.Write([]byte(msg))
-			w.Write([]byte("\n\n"))
-			flusher.Flush()
-		case <-ticker.C:
-			// send heartbeat comment to keep connection alive
-			w.Write([]byte(": ping\n\n"))
-			flusher.Flush()
 		case <-c.Request.Context().Done():
+			log.Printf("SSE connection closed for user %s", userUUID.String())
 			return
 		}
 	}

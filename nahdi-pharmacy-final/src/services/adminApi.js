@@ -72,10 +72,19 @@ export const adminLogin = async (email, password) => {
     
     const response = await api.post('/auth/admin/login', { email, password });
     const user = response.data?.user || response.data?.data?.user || response.data;
+    const token = response.data?.token || response.data?.data?.token;
+
+    // Save admin token to localStorage for product creation
+    if (token) {
+      localStorage.setItem('admin_token', token);
+      localStorage.setItem('adminToken', token); // backup key
+      console.log('✅ Admin token saved to localStorage');
+    }
 
     return {
       success: true,
       user,
+      token,
     };
   } catch (error) {
     console.error("Login error:", {

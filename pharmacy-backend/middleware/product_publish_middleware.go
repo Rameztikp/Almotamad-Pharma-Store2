@@ -8,16 +8,13 @@ import (
 	"net/http"
 	"strings"
 
+	"pharmacy-backend/config"
+	"pharmacy-backend/models"
+	"pharmacy-backend/utils"
+
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
 )
-
-// getJWTSecret returns the JWT secret key
-func getJWTSecret() []byte {
-	// This should match the secret in auth.go
-	return []byte("your-secret-key-change-this-in-production")
-}
 
 // CheckProductPublishPermission يتحقق من صلاحيات النشر/إلغاء النشر للمنتجات
 func CheckProductPublishPermission() gin.HandlerFunc {
@@ -41,8 +38,22 @@ func CheckProductPublishPermission() gin.HandlerFunc {
 			log.Println("[DEBUG] No request body present")
 		}
 
-		// 2. استخراج التوكن من رأس الطلب
-		tokenString := authHeader
+		// 2. استخراج التوكن من رأس الطلب أو الكوكيز
+		var tokenString string
+		
+		// Try cookies first (admin_access_token), then fallback to Authorization header
+		if v, err := c.Cookie("admin_access_token"); err == nil && v != "" {
+			tokenString = v
+		} else if v, err := c.Cookie("client_access_token"); err == nil && v != "" {
+			tokenString = v
+		} else {
+			tokenString = authHeader
+			// إزالة البادئة 'Bearer ' إذا وجدت
+			if len(tokenString) > 7 && strings.ToUpper(tokenString[0:7]) == "BEARER " {
+				tokenString = tokenString[7:]
+			}
+		}
+
 		if tokenString == "" {
 			errMsg := "مطلوب مصادقة: لم يتم توفير رمز المصادقة"
 			log.Println("[AUTH ERROR]", errMsg)
@@ -51,58 +62,58 @@ func CheckProductPublishPermission() gin.HandlerFunc {
 			return
 		}
 
-		// 3. التحقق من صيغة التوكن (إزالة البادئة 'Bearer ' إذا وجدت)
-		if len(tokenString) > 7 && strings.ToUpper(tokenString[0:7]) == "BEARER " {
-			tokenString = tokenString[7:]
-		}
-
-		// 4. تحقق من صحة التوكن
-		type tokenClaims struct {
-			UserID uuid.UUID `json:"user_id"`
-			Role   string   `json:"role"`
-			jwt.RegisteredClaims
-		}
-
-		claims := &tokenClaims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			// التحقق من خوارزمية التوقيع
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return getJWTSecret(), nil
-		})
-
-		// 4. معالجة أخطاء التوكن
+		// 3. التحقق من صحة التوكن باستخدام نفس الأدوات المستخدمة في باقي التطبيق
+		claims, err := utils.VerifyJWT(tokenString)
 		if err != nil {
-			errMsg := fmt.Sprintf("خطأ في تحليل رمز المصادقة: %v", err)
+			errMsg := fmt.Sprintf("جلسة غير صالحة: %v", err)
 			log.Printf("[AUTH ERROR] %s", errMsg)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
 			c.Abort()
 			return
 		}
 
-		// 5. التحقق من صحة التوكن
-		if !token.Valid {
-			errMsg := "انتهت صلاحية الجلسة"
+		// 4. الحصول على معرف المستخدم
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok {
+			errMsg := "معرف المستخدم غير صالح في التوكن"
 			log.Println("[AUTH ERROR]", errMsg)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
 			c.Abort()
 			return
 		}
 
-		// 6. استخراج البيانات من التوكن
-		claims, ok := token.Claims.(*tokenClaims)
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			errMsg := "معرف المستخدم غير صالح"
+			log.Printf("[AUTH ERROR] %s: %v", errMsg, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
+			c.Abort()
+			return
+		}
+
+		// 5. الحصول على دور المستخدم
+		role, ok := claims["role"].(string)
 		if !ok {
-			errMsg := "خطأ في معالجة بيانات التوكن"
+			errMsg := "دور المستخدم غير محدد في التوكن"
 			log.Println("[AUTH ERROR]", errMsg)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
+			c.Abort()
+			return
+		}
+
+		// 6. الحصول على بيانات المستخدم من قاعدة البيانات للتأكد من أنه نشط
+		var user models.User
+		if err := config.DB.Where("id = ? AND is_active = ?", userID, true).First(&user).Error; err != nil {
+			errMsg := "المستخدم غير موجود أو غير نشط"
+			log.Printf("[AUTH ERROR] %s: %v", errMsg, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg})
 			c.Abort()
 			return
 		}
 
 		// 7. التحقق من الصلاحيات (يجب أن يكون المستخدم مسؤولاً أو ناشراً)
-		if claims.Role != "admin" && claims.Role != "publisher" {
-			errMsg := fmt.Sprintf("User %s with role %s tried to access publish endpoint", claims.UserID, claims.Role)
+		if role != string(models.RoleAdmin) && role != string(models.RoleSuperAdmin) && role != "publisher" {
+			errMsg := fmt.Sprintf("User %s with role %s tried to access publish endpoint", userID, role)
 			log.Printf("[AUTH ERROR] %s", errMsg)
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "ليس لديك صلاحية للوصول إلى هذه الوظيفة",
@@ -111,12 +122,15 @@ func CheckProductPublishPermission() gin.HandlerFunc {
 			return
 		}
 
-		// 8. تسجيل محاولة الوصول
-		log.Printf("[AUTH] User %s (%s) is accessing publish endpoint", claims.UserID, claims.Role)
+		// 8. تسجيل محاولة الوصول الناجحة
+		log.Printf("[AUTH] User %s (%s) is accessing publish endpoint", userID, role)
 		
 		// 9. إضافة بيانات المستخدم إلى السياق للاستخدام اللاحق
-		c.Set("userID", claims.UserID)
-		c.Set("userRole", claims.Role)
+		c.Set("userID", userID)
+		c.Set("userRole", role)
+		c.Set("user_id", userID)
+		c.Set("user_role", role)
+		c.Set("user", &user)
 		
 		// Proceed to the next handler
 		c.Next()

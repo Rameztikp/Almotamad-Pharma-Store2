@@ -49,6 +49,7 @@
 # استنساخ المشروع
 git clone <repository-url>
 cd pharmacy-backend
+cd Almotamad-Pharma-Store-1
 
 # تثبيت المكتبات
 go mod download

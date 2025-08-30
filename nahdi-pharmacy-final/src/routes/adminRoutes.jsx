@@ -54,6 +54,7 @@ const WholesaleCustomersPage = lazy(() => import('../pages/admin/WholesaleCustom
 const RetailCustomersPage = lazy(() => import('../pages/admin/RetailCustomersPage'));
 const WholesaleOrdersPage = lazy(() => import('../pages/admin/WholesaleOrdersPage'));
 const RetailOrdersPage = lazy(() => import('../pages/admin/RetailOrdersPage'));
+const BannersManager = lazy(() => import('../pages/Admin/BannersManager'));
 
 // Inventory Management
 const InventoryManagementPage = lazy(() => import('../pages/admin/inventory/InventoryManagementPage'));
@@ -248,6 +249,16 @@ const AdminRoutes = () => {
           element={
             <ProtectedRoute>
               <CouponsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Banners */}
+        <Route
+          path="banners"
+          element={
+            <ProtectedRoute>
+              <BannersManager />
             </ProtectedRoute>
           }
         />

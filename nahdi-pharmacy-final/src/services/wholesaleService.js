@@ -399,6 +399,48 @@ const wholesaleService = {
    * Get current user's wholesale request status
    * @returns {Promise<Object>} - Wholesale request status and details
    */
+  getCurrentRequestStatus: async () => {
+    console.log("🔍 جاري التحقق من حالة طلب الترقية الحالي...");
+
+    try {
+      const response = await ApiService.get(`/wholesale/requests`);
+      console.log("✅ تم جلب حالة الطلب بنجاح:", response.data);
+
+      // If we got an array, return the first request or not_found
+      if (Array.isArray(response.data)) {
+        return response.data[0] || { status: "not_found" };
+      }
+
+      // If we got a single object with status
+      if (response.data && response.data.status) {
+        return response.data;
+      }
+
+      // If no valid status, treat as no request found
+      return { status: "not_found" };
+    } catch (error) {
+      // Handle 404 specifically
+      if (error.response?.status === 404) {
+        console.log("ℹ️ لا توجد طلبات جملة سابقة");
+        return { status: "not_found" };
+      }
+
+      console.error("❌ فشل جلب حالة الطلب:", {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        url: error.config?.url,
+      });
+
+      // For any other error, still return not_found to prevent showing "under review" state
+      return { status: "not_found" };
+    }
+  },
+
+  /**
+   * Get current user's wholesale request status (legacy method)
+   * @returns {Promise<Object>} - Wholesale request status and details
+   */
   getMyWholesaleRequest: async () => {
     console.log("🔍 جاري التحقق من حالة الطلب...");
 

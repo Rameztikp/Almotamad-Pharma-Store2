@@ -1,18 +1,23 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"pharmacy-backend/models"
 	"time"
 
+	"pharmacy-backend/models"
+
+	"github.com/cloudinary/cloudinary-go/v2"
+	"github.com/cloudinary/cloudinary-go/v2/api/admin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
+var Cld *cloudinary.Cloudinary
 
 // DatabaseConfig إعدادات قاعدة البيانات
 type DatabaseConfig struct {
@@ -44,10 +49,36 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// SetupCloudinary initializes the Cloudinary instance
+func SetupCloudinary() {
+	cloudinaryURL := os.Getenv("CLOUDINARY_URL")
+	if cloudinaryURL == "" {
+		log.Println("⚠️ CLOUDINARY_URL is not set. Image uploads will be disabled.")
+		return
+	}
+
+	var err error
+	Cld, err = cloudinary.NewFromURL(cloudinaryURL)
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize Cloudinary: %v", err)
+	}
+
+	// Optional: Check connection by listing root folders
+	ctx := context.Background()
+	_, err = Cld.Admin.RootFolders(ctx, admin.RootFoldersParams{})
+	if err != nil {
+		log.Printf("⚠️ Could not connect to Cloudinary: %v. Image uploads will fail.", err)
+	} else {
+		log.Println("☁️ Cloudinary connected successfully")
+	}
+}
+
 // ConnectDatabase الاتصال بقاعدة البيانات
 func ConnectDatabase() {
+	// Setup Cloudinary
+	SetupCloudinary()
 	config := GetDatabaseConfig()
-	
+
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Riyadh",
 		config.Host, config.User, config.Password, config.DBName, config.Port, config.SSLMode,
@@ -570,7 +601,38 @@ func AutoMigrate() error {
 		}
 	}
 	
-	log.Println("\n✅ Database migrations completed successfully")
+	// Create notifications table manually
+	log.Println("📦 Creating notifications table via raw SQL")
+	createNotificationsSQL := `
+	CREATE TABLE IF NOT EXISTS notifications (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		type VARCHAR(50) NOT NULL DEFAULT 'info',
+		title VARCHAR(255) NOT NULL,
+		message TEXT NOT NULL,
+		data TEXT DEFAULT '',
+		is_read BOOLEAN NOT NULL DEFAULT false,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		read_at TIMESTAMPTZ NULL
+	);
+	
+	-- Create indexes for better performance
+	CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+	CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);
+	CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
+	CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at) WHERE read_at IS NULL;
+	`
+	
+	if err := migDB.Exec(createNotificationsSQL).Error; err != nil {
+		log.Printf("❌ Failed to create notifications table: %v\n", err)
+		return fmt.Errorf("failed to create notifications table: %w", err)
+	} else {
+		log.Println("✅ Notifications table created successfully")
+	}
+	
+	log.Println("✅ Database migration completed successfully")
 	return nil
 }
 

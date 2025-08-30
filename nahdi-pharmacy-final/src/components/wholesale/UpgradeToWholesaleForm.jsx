@@ -74,13 +74,6 @@ export default function UpgradeToWholesaleForm({ onSuccess, onCancel }) {
       try {
         console.log('🔍 جاري تحميل حالة طلب الجملة...');
         
-        // In development mode, always show the form
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🛠️ Development mode: Showing upgrade form');
-          setVerificationStatus('not_found');
-          return;
-        }
-        
         const request = await wholesaleService.getMyWholesaleRequest();
         
         if (request && request.status) {
@@ -167,6 +160,28 @@ export default function UpgradeToWholesaleForm({ onSuccess, onCancel }) {
       
       toast.dismiss(loadingToast);
       toast.success('تم إرسال طلب الترقية بنجاح! سيتم مراجعته من قبل الإدارة.');
+      
+      // Add notification to notification service
+      try {
+        const notificationService = (await import('../../services/notificationService')).default;
+        notificationService.addNotification({
+          type: 'wholesale_submitted',
+          title: 'تم تقديم طلب ترقية حساب الجملة',
+          message: 'تم تقديم طلبك بنجاح وهو الآن قيد المراجعة من قبل الإدارة',
+          meta: { 
+            requestId: response?.data?.id || response?.id,
+            status: 'pending',
+            timestamp: new Date().toISOString()
+          }
+        });
+        console.log('✅ تم إضافة الإشعار إلى قائمة الإشعارات');
+      } catch (error) {
+        console.error('❌ خطأ في إضافة الإشعار:', error);
+      }
+      
+      // Update verification status to pending to show the correct UI
+      setVerificationStatus('pending');
+      setCurrentStep(3);
       
       onSuccess?.();
       
@@ -357,11 +372,8 @@ export default function UpgradeToWholesaleForm({ onSuccess, onCancel }) {
     }
   };
 
-  // In development, always show the form regardless of verification status
-  console.log('🛠️ Development mode: Rendering upgrade form');
-  
-  // Only show status message in production and if there's a verification status
-  if (process.env.NODE_ENV !== 'development' && verificationStatus && verificationStatus !== 'not_found') {
+  // Show status message if there's a verification status (except not_found)
+  if (verificationStatus && verificationStatus !== 'not_found') {
     const status = statusMessages[verificationStatus] || statusMessages.pending;
     
     return (

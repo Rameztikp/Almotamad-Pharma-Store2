@@ -20,7 +20,46 @@ const categoryService = {
 
 // Helper function to safely get token
 const getAuthToken = () => {
-  return localStorage.getItem('token') || localStorage.getItem('authToken');
+  console.log('🔍 getAuthToken: Checking for authentication token...');
+  
+  // First check localStorage for admin token
+  const adminToken = localStorage.getItem('admin_token') || localStorage.getItem('adminToken');
+  console.log('🔍 localStorage admin tokens:', {
+    admin_token: localStorage.getItem('admin_token'),
+    adminToken: localStorage.getItem('adminToken')
+  });
+  
+  if (adminToken) {
+    console.log('✅ Found admin token in localStorage:', adminToken.substring(0, 20) + '...');
+    return adminToken;
+  }
+  
+  // Then check regular tokens
+  const localToken = localStorage.getItem('token') || localStorage.getItem('authToken');
+  console.log('🔍 localStorage regular tokens:', {
+    token: localStorage.getItem('token'),
+    authToken: localStorage.getItem('authToken')
+  });
+  
+  if (localToken) {
+    console.log('✅ Found token in localStorage:', localToken.substring(0, 20) + '...');
+    return localToken;
+  }
+  
+  // Then check cookies (for admin authentication)
+  console.log('🔍 Checking cookies:', document.cookie);
+  const cookies = document.cookie.split(';');
+  for (let cookie of cookies) {
+    const [name, value] = cookie.trim().split('=');
+    console.log('🔍 Cookie:', { name, value: value ? value.substring(0, 20) + '...' : 'empty' });
+    if (name === 'token' || name === 'authToken' || name === 'admin_token') {
+      console.log('✅ Found token in cookies:', value.substring(0, 20) + '...');
+      return value;
+    }
+  }
+  
+  console.log('❌ No authentication token found anywhere');
+  return null;
 };
 
 // Helper function to build query parameters
@@ -479,11 +518,16 @@ const productService = {
    * @returns {Promise<Object>} - Created product data
    */
   async createProduct(productData) {
+    console.log('🚀🚀🚀 createProduct ENTRY POINT:', productData);
     try {
+      console.log('🚀 createProduct called with:', productData);
+      
       // Check authentication
       if (!getAuthToken()) {
+        console.error('❌ No auth token found');
         throw new Error('يجب تسجيل الدخول أولاً');
       }
+      console.log('✅ Auth token found');
 
       console.group('📦 Preparing product data');
       console.log('Product data:', productData);
@@ -509,32 +553,47 @@ const productService = {
         throw new Error('Category ID is required');
       }
 
-      // Prepare the request payload with only necessary fields
+      // Prepare the request payload matching server expectations
       const payload = {
         name: productData.name,
         description: productData.description || '',
         price: parseFloat(productData.price) || 0,
-        category_id: categoryId, // This should now be a string
-        type: productData.type || 'retail', // Use the provided type or default to 'retail'
-        is_active: false, // Set to false by default, will be activated manually
+        category_id: categoryId,
+        type: productData.type || 'retail',
+        sku: productData.sku || `SKU-${Date.now()}`,
+        brand: productData.brand || '',
         stock_quantity: parseInt(productData.stock_quantity || productData.stock || 0, 10),
         min_stock_level: parseInt(productData.min_stock_level || 5, 10),
-        sku: productData.sku || `SKU-${Date.now()}`,
-        barcode: productData.barcode || `BC-${Date.now()}`,
-        brand: productData.brand || '',
-        is_medicine: productData.is_medicine || false,
-        requires_prescription: productData.requires_prescription || false,
+        image_url: productData.image_url || (productData.images && productData.images.length > 0 ? productData.images[0] : ''),
         images: Array.isArray(productData.images) ? 
           productData.images.map(img => {
             if (typeof img === 'string') return img;
-            return img.path || (img instanceof File ? URL.createObjectURL(img) : '');
-          }).filter(Boolean) : [] // Remove any empty image strings
+            if (img && typeof img === 'object') {
+              return img.url || img.path || (img instanceof File ? URL.createObjectURL(img) : '');
+            }
+            return '';
+          }).filter(Boolean) : [],
+        is_active: true, // Set to true by default
+        is_featured: productData.is_featured || false,
+        requires_prescription: productData.requiresPrescription || false,
+        // Medicine-specific fields
+        expiry_date: productData.expiryDate || null,
+        batch_number: productData.batchNumber || null,
+        manufacturer: productData.manufacturer || null,
+        active_ingredient: productData.activeIngredient || null,
+        dosage_form: productData.dosageForm || null,
+        strength: productData.strength || null,
+        storage_conditions: productData.storageConditions || null,
+        side_effects: productData.sideEffects || null,
+        contraindications: productData.contraindications || null
       };
       
       console.log('Request payload:', JSON.stringify(payload, null, 2));
       
       // Make the API request with error handling
       try {
+        console.log('🚀 Making API request to /admin/products...');
+        console.log('🔍 Final payload being sent:', payload);
         const response = await ApiService.post('/admin/products', payload);
         console.log('✅ Product created successfully:', response);
         return response.data;
@@ -542,12 +601,15 @@ const productService = {
         console.error('❌ API Error:', {
           status: apiError.response?.status,
           data: apiError.response?.data,
+          message: apiError.message,
+          name: apiError.name,
           config: {
             url: apiError.config?.url,
             method: apiError.config?.method,
             data: apiError.config?.data
           }
         });
+        console.error('❌ Full API Error object:', apiError);
         throw apiError;
       }
       
@@ -700,7 +762,14 @@ const productService = {
         }
       });
 
-      // Return the path directly from the response (ApiService already parses the response)
+      // The backend now returns an object with a 'url' property for Cloudinary URL
+      // It may also return an array if multiple files are uploaded in the future
+      if (response && response.url) {
+        return [response.url];
+      } else if (response && Array.isArray(response)) {
+        return response.map(res => res.url);
+      }
+      // Fallback for old structure just in case
       return [response.path];
     } catch (error) {
       console.error('Error uploading images:', error);
@@ -748,14 +817,7 @@ const productService = {
       // Make the API request to update product status
       const response = await ApiService.patch(
         `/admin/products/${productId}/status`,
-        JSON.stringify(requestData), // Ensure data is properly stringified
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json'
-          }
-        }
+        requestData // ApiService will handle JSON stringification
       );
 
       console.log('Status update response:', response);

@@ -31,8 +31,9 @@ import CategoryRoute from "./pages/CategoryRoute";
 // Wrap the WholesaleHomePage with the withWholesaleAccess HOC
 const WholesaleHomePageWithAccess = withWholesaleAccess(WholesaleHomePage);
 
-// Lazy load admin routes
+// Lazy load routes
 const AdminRoutes = lazy(() => import("./routes/adminRoutes"));
+const UserRoutes = lazy(() => import("./routes.jsx"));
 import "./App.css";
 
 // Loading component for Suspense fallback
@@ -45,10 +46,15 @@ const LoadingFallback = () => (
 function FullyInteractiveApp() {
   // Clear any conflicting auth data on app start
   useEffect(() => {
-    // Only clear admin data if we're not on admin routes
-    if (!window.location.pathname.startsWith("/admin")) {
-      localStorage.removeItem("adminData");
-      localStorage.removeItem("adminToken");
+    // Only clear admin data if we're specifically on regular user routes
+    // Don't clear admin data when accessing admin routes or login page
+    const currentPath = window.location.pathname;
+    if (currentPath === "/" || currentPath.startsWith("/products") || currentPath.startsWith("/wholesale")) {
+      // Only clear admin data when on main store pages, not admin pages
+      const isAdminLoggedIn = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      if (!isAdminLoggedIn) {
+        localStorage.removeItem("adminData");
+      }
     }
   }, []);
 
@@ -114,6 +120,16 @@ function FullyInteractiveApp() {
                       <ProtectedRoute>
                         <MyOrdersPage />
                       </ProtectedRoute>
+                    }
+                  />
+                  
+                  {/* User Routes */}
+                  <Route
+                    path="/settings/*"
+                    element={
+                      <Suspense fallback={<LoadingFallback />}>
+                        <UserRoutes />
+                      </Suspense>
                     }
                   />
 

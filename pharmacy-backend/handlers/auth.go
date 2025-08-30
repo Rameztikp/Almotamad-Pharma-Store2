@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"net/http"
+	"time"
+
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
 	"regexp"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -165,15 +166,7 @@ func Register(c *gin.Context) {
 	}
 	http.SetCookie(c.Writer, refreshCookie)
 
-	// Commit the transaction
-	if err := tx.Commit().Error; err != nil {
-		tx.Rollback()
-		utils.InternalServerErrorResponse(c, "فشل في حفظ البيانات", err.Error())
-		return
-	}
-	
-	// Return success response without exposing tokens in JSON
-	utils.CreatedResponse(c, "تم إنشاء الحساب بنجاح", gin.H{
+	utils.SuccessResponse(c, "تم إنشاء الحساب بنجاح", gin.H{
 		"user": user,
 	})
 }
@@ -190,16 +183,20 @@ func Login(c *gin.Context) {
 	var user models.User
 	if err := config.DB.Where("email = ? AND is_active = ?", req.Email, true).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.UnauthorizedResponse(c, "Invalid email or password")
+			// 🛡️ تسجيل محاولة تسجيل دخول فاشلة - مستخدم غير موجود
+			utils.LogFailedLogin(c, req.Email, "مستخدم غير موجود أو غير نشط")
+			utils.UnauthorizedResponse(c, "البريد الإلكتروني أو كلمة المرور غير صحيحة")
 		} else {
-			utils.InternalServerErrorResponse(c, "Database error", err.Error())
+			utils.InternalServerErrorResponse(c, "خطأ في قاعدة البيانات", err.Error())
 		}
 		return
 	}
 	
 	// التحقق من كلمة المرور
 	if !utils.CheckPassword(req.Password, user.PasswordHash) {
-		utils.UnauthorizedResponse(c, "Invalid email or password")
+		// 🛡️ تسجيل محاولة تسجيل دخول فاشلة - كلمة مرور خاطئة
+		utils.LogFailedLogin(c, req.Email, "كلمة مرور خاطئة")
+		utils.UnauthorizedResponse(c, "البريد الإلكتروني أو كلمة المرور غير صحيحة")
 		return
 	}
 	
@@ -246,11 +243,32 @@ func GetProfile(c *gin.Context) {
 		utils.UnauthorizedResponse(c, "User not authenticated")
 		return
 	}
+
+	var userObj *models.User
+	switch v := user.(type) {
+	case *models.User:
+		userObj = v
+	case models.User:
+		userObj = &v
+	default:
+		utils.InternalServerErrorResponse(c, "خطأ في نوع بيانات المستخدم", "Unexpected user data type in context")
+		return
+	}
 	
-	userObj := user.(*models.User)
-	userObj.PasswordHash = "" // إخفاء كلمة المرور
+	// إعادة جلب بيانات المستخدم من قاعدة البيانات للتأكد من الحصول على أحدث البيانات
+	var freshUser models.User
+	if err := config.DB.Where("id = ? AND is_active = ?", userObj.ID, true).First(&freshUser).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.UnauthorizedResponse(c, "المستخدم غير موجود أو غير نشط")
+		} else {
+			utils.InternalServerErrorResponse(c, "خطأ في قاعدة البيانات", err.Error())
+		}
+		return
+	}
 	
-	utils.SuccessResponse(c, "Profile retrieved successfully", userObj)
+	freshUser.PasswordHash = "" // إخفاء كلمة المرور
+	
+	utils.SuccessResponse(c, "Profile retrieved successfully", freshUser)
 }
 
 // UpdateProfileRequest بنية طلب تحديث الملف الشخصي
@@ -519,6 +537,8 @@ func RefreshToken(c *gin.Context) {
     }
 
     utils.SuccessResponse(c, "تم تحديث التوكن بنجاح", RefreshTokenResponse{
-        User: user,
+        AccessToken:  accessToken,
+        RefreshToken: refreshToken,
+        User:         user,
     })
 }

@@ -6,12 +6,27 @@ import AdminNavbar from './admin/AdminNavbar';
 const AppNavbar = ({ toggleSidebar }) => {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isAdminLoginRoute = location.pathname === '/admin/login';
 
-  if (isAdminRoute) {
-    return <AdminNavbar toggleSidebar={toggleSidebar} />;
+  // Don't show AdminNavbar on login page
+  if (isAdminRoute && !isAdminLoginRoute) {
+    // Check if admin is authenticated before showing navbar
+    const adminToken = localStorage.getItem('admin_token') || 
+                      localStorage.getItem('adminToken') || 
+                      localStorage.getItem('admin_access_token');
+    
+    if (adminToken) {
+      return <AdminNavbar toggleSidebar={toggleSidebar} />;
+    }
   }
   
-  return <InteractiveNavbar />;
+  // Show InteractiveNavbar for non-admin routes or when admin not authenticated
+  if (!isAdminRoute) {
+    return <InteractiveNavbar />;
+  }
+  
+  // Don't show any navbar for admin login page or unauthenticated admin pages
+  return null;
 };
 
 export default AppNavbar;

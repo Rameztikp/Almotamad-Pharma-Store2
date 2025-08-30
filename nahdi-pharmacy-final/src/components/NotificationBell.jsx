@@ -1,29 +1,133 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell } from 'lucide-react';
+import { Bell, BellOff } from 'lucide-react';
 import notificationService from '../services/notificationService';
-
-const formatTime = (ts) => {
-  try {
-    const d = new Date(ts);
-    return d.toLocaleString('ar-EG');
-  } catch {
-    return '';
-  }
-};
+import { requestNotificationPermission, getFCMToken, onMessageListener } from '../services/pushNotificationService';
 
 const NotificationBell = () => {
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState(() => notificationService.getNotifications());
+  const [items, setItems] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [position, setPosition] = useState({ top: 0, right: 0, isMobile: false });
+  const [pushEnabled, setPushEnabled] = useState(false);
   const btnRef = useRef(null);
 
-  useEffect(() => {
-    const unsub = notificationService.subscribe((list) => setItems(Array.isArray(list) ? list : []));
-    return () => unsub && unsub();
+  // Initialize push notifications
+  const initPushNotifications = useCallback(async () => {
+    try {
+      const hasPermission = await requestNotificationPermission();
+      if (hasPermission) {
+        await getFCMToken();
+        setPushEnabled(true);
+      }
+    } catch (error) {
+      console.error('Error initializing push notifications:', error);
+    }
   }, []);
 
-  const unreadCount = useMemo(() => items.filter((n) => !n.read).length, [items]);
+  // Listen for new push notifications
+  useEffect(() => {
+    const unsubscribe = onMessageListener((payload) => {
+      // Refresh notifications when a new push is received
+      loadNotifications();
+      loadUnreadCount();
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load notifications from API instead of localStorage
+  const loadNotifications = async () => {
+    try {
+      const data = await notificationService.getNotifications(20, false);
+      setItems(data.notifications || []);
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+    }
+  };
+
+  const loadUnreadCount = async () => {
+    try {
+      const data = await notificationService.getUnreadCount();
+      setUnreadCount(data.unread_count || 0);
+    } catch (error) {
+      console.error('Error loading unread count:', error);
+    }
+  };
+
+  const handleMarkAsRead = async (notificationId) => {
+    try {
+      await notificationService.markAsRead(notificationId);
+      setItems(prev => 
+        prev.map(notif => 
+          notif.id === notificationId 
+            ? { ...notif, read_at: new Date().toISOString() }
+            : notif
+        )
+      );
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await notificationService.markAllAsRead();
+      setItems(prev => 
+        prev.map(notif => ({ 
+          ...notif, 
+          read_at: notif.read_at || new Date().toISOString() 
+        }))
+      );
+      setUnreadCount(0);
+      loadNotifications(); // Refresh the list
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
+  };
+
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInHours = (now - date) / (1000 * 60 * 60);
+
+    if (diffInHours < 1) {
+      const diffInMinutes = Math.floor((now - date) / (1000 * 60));
+      return diffInMinutes < 1 ? 'الآن' : `منذ ${diffInMinutes} دقيقة`;
+    } else if (diffInHours < 24) {
+      return `منذ ${Math.floor(diffInHours)} ساعة`;
+    } else {
+      return date.toLocaleDateString('ar-SA');
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+    loadUnreadCount();
+    initPushNotifications();
+
+    // Set up SSE connection for real-time updates
+    const sseUrl = '/api/v1/notifications/stream';
+    const eventSource = new EventSource(sseUrl, { withCredentials: true });
+
+    eventSource.addEventListener('new_notification', (event) => {
+      try {
+        const notification = JSON.parse(event.data);
+        setItems(prev => [notification, ...prev]);
+        setUnreadCount(prev => prev + 1);
+      } catch (error) {
+        console.error('Error parsing new_notification event:', error);
+      }
+    });
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
 
   // Compute dropdown position
   const computePosition = () => {
@@ -75,15 +179,18 @@ const NotificationBell = () => {
     <div className="relative">
       <button
         ref={btnRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="relative p-2.5 rounded-full hover:bg-blue-50 text-gray-600 hover:text-blue-600 transition-colors duration-300"
-        aria-label="الإشعارات"
+        onClick={() => setOpen(!open)}
+        className="p-2 rounded-full hover:bg-gray-100 relative"
+        aria-label="Notifications"
       >
-        <Bell className="w-5 h-5" />
+        {pushEnabled ? (
+          <Bell className="w-6 h-6 text-blue-500" />
+        ) : (
+          <BellOff className="w-6 h-6 text-gray-400" />
+        )}
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs font-medium rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center shadow-sm">
-            {unreadCount}
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+            {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
@@ -102,7 +209,7 @@ const NotificationBell = () => {
             {items.length > 0 && (
               <button
                 className="text-xs text-blue-600 hover:underline"
-                onClick={() => notificationService.markAllRead()}
+                onClick={handleMarkAllAsRead}
               >
                 تحديد الكل كمقروء
               </button>
@@ -115,14 +222,14 @@ const NotificationBell = () => {
               items.map((n) => (
                 <div
                   key={n.id}
-                  className={`px-4 py-3 border-b border-gray-50 text-right ${!n.read ? 'bg-blue-50/40' : ''}`}
-                  onMouseEnter={() => !n.read && notificationService.markRead(n.id)}
+                  className={`px-4 py-3 border-b border-gray-50 text-right ${!n.read_at ? 'bg-blue-50/40' : ''}`}
+                  onMouseEnter={() => !n.read_at && handleMarkAsRead(n.id)}
                 >
                   <div className="text-sm font-medium text-gray-800 mb-0.5">{n.title}</div>
                   {n.message && (
                     <div className="text-xs text-gray-600 mb-1">{n.message}</div>
                   )}
-                  <div className="text-[11px] text-gray-400">{formatTime(n.createdAt)}</div>
+                  <div className="text-[11px] text-gray-400">{formatTime(n.created_at)}</div>
                 </div>
               ))
             )}

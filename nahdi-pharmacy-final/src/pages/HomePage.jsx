@@ -7,21 +7,24 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { useShop } from '../context/useShop';
+// import { useShop } from '../context/useShop'; // مؤقتاً لتجنب التعليق
 import Toast from '../components/Toast';
 import productService from '../services/productService';
 import { categoryService } from '../services/categoryService';
+import bannerService from '../services/bannerService';
 import ProductCard from '../components/ProductCard';
 import { isRetailProductPublished } from '../utils/productUtils';
+import { SERVER_ROOT_URL } from '../services/api';
 
 const HomePage = () => {
-  const { addToCart, toggleFavorite, favoriteItems } = useShop();
+  // const { addToCart, toggleFavorite, favoriteItems } = useShop(); // مؤقتاً معطل
   const [toast, setToast] = useState({ isVisible: false, message: '', type: 'success' });
   const [currentSlide, setCurrentSlide] = useState(0);
   const [categories, setCategories] = useState([]); // سيتم جلبها من الـ API
   const [featuredProducts, setFeaturedProducts] = useState([]); // سيتم جلبها من الـ API
   // State for retail products that will be shown in the featured section
   const [retailProducts, setRetailProducts] = useState([]);
+  const [heroBanners, setHeroBanners] = useState([]); // البنرات من الـ API
   const [isLoading, setIsLoading] = useState(true); // حالة التحميل
 
   const showToast = (message, type = 'success') => {
@@ -58,32 +61,41 @@ const HomePage = () => {
   // جلب الفئات والمنتجات المميزة من الـ API
   useEffect(() => {
     const fetchData = async () => {
-      setIsLoading(true);
-      console.group('🚀 بدء تحميل بيانات الصفحة الرئيسية');
+      console.log('🚀 بدء تحميل بيانات الصفحة الرئيسية');
       
       try {
+        // تعيين البنرات الافتراضية أولاً
+        setHeroBanners([
+          {
+            id: 1,
+            title: 'صيدلية المعتمد فارما',
+            description: 'شريكك الموثوق في الصحة والجمال',
+            image: '/images/placeholder-banner.jpg',
+            link: '/products'
+          },
+          {
+            id: 2,
+            title: 'عروض الصيف الكبرى',
+            description: 'خصومات تصل إلى 50% على منتجات مختارة!',
+            image: '/images/placeholder-banner.jpg',
+            link: '/products?category=offers'
+          }
+        ]);
+
         // جلب الفئات
         console.log('📂 جار جلب الفئات...');
         const categoriesResponse = await categoryService.getCategories();
-        console.log('✅ استجابة الفئات من السيرفر:', categoriesResponse);
-        
-        // تحقق من بنية الاستجابة
         const categoriesData = Array.isArray(categoriesResponse) 
           ? categoriesResponse 
           : categoriesResponse?.data || [];
-          
-        console.log('📊 بيانات الفئات المستخرجة:', categoriesData);
         setCategories(categoriesData);
         
         // جلب منتجات القطاعي
         console.log('🛒 جار جلب منتجات القطاعي...');
-        let productsData = [];
-        
         try {
-          // Fetch featured products
           const response = await productService.getFeaturedProducts();
+          let productsData = [];
           
-          // Handle different response formats
           if (Array.isArray(response)) {
             productsData = response;
           } else if (response && response.data) {
@@ -91,77 +103,53 @@ const HomePage = () => {
           } else if (response && response.products) {
             productsData = Array.isArray(response.products) ? response.products : [];
           }
-        console.log('📦 المنتجات المميزة المستخرجة:', productsData);
+          
+          setFeaturedProducts(productsData);
+        } catch (error) {
+          console.error('❌ خطأ في جلب المنتجات:', error);
+          setFeaturedProducts([]);
+        }
         
-        // Set the featured products
-        setFeaturedProducts(productsData);
-        
-      } catch (error) {
-        console.error('❌ خطأ في جلب المنتجات:', error);
-        showToast('حدث خطأ في تحميل المنتجات', 'error');
-      }
-        
-        // تسجيل حالة التحميل
         console.log('🏁 تم تحميل البيانات بنجاح');
         
       } catch (error) {
-        console.error('❌ خطأ في جلب البيانات:', {
-          message: error.message,
-          stack: error.stack,
-          response: error.response,
-          error: error
-        });
-        showToast(`حدث خطأ: ${error.message || 'تعذر تحميل البيانات'}`, 'error');
+        console.error('❌ خطأ في جلب البيانات:', error);
+        // تعيين قيم افتراضية في حالة الخطأ
+        setCategories([]);
+        setFeaturedProducts([]);
       } finally {
         setIsLoading(false);
-        console.groupEnd();
       }
     };
     
-    fetchData().catch(error => {
-      console.error('❌ فشل في جلب البيانات:', error);
-      setIsLoading(false);
-    });
+    fetchData();
   }, []);
 
-  const heroBanners = [
-    {
-      id: 1,
-      title: 'صيدلية المعتمد فارما',
-      description: 'شريكك الموثوق في الصحة والجمال',
-      image: '/images/placeholder-banner.jpg',
-      link: '/products'
-    },
-    {
-      id: 2,
-      title: 'عروض الصيف الكبرى',
-      description: 'خصومات تصل إلى 50% على منتجات مختارة!',
-      image: '/images/placeholder-banner.jpg',
-      link: '/products?category=offers'
-    },
-    {
-      id: 3,
-      title: 'منتجات العناية بالبشرة',
-      description: 'اكتشف مجموعتنا الواسعة من منتجات العناية بالبشرة الفاخرة.',
-      image: '/images/placeholder-banner.jpg',
-      link: '/products?category=cosmetics'
-    }
-  ];
 
   const nextSlide = ( ) => {
-    setCurrentSlide((prev) => (prev === heroBanners.length - 1 ? 0 : prev + 1));
+    if (heroBanners.length > 0) {
+      setCurrentSlide((prev) => (prev === heroBanners.length - 1 ? 0 : prev + 1));
+    }
   };
 
   const prevSlide = () => {
-    setCurrentSlide((prev) => (prev === 0 ? heroBanners.length - 1 : prev - 1));
+    if (heroBanners.length > 0) {
+      setCurrentSlide((prev) => (prev === 0 ? heroBanners.length - 1 : prev - 1));
+    }
   };
 
   useEffect(() => {
-    const interval = setInterval(nextSlide, 5000);
-    return () => clearInterval(interval);
-  }, [currentSlide]);
+    if (heroBanners.length > 0) {
+      const interval = setInterval(() => {
+        setCurrentSlide((prev) => (prev >= heroBanners.length - 1 ? 0 : prev + 1));
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [heroBanners]);
 
-  const currentBanner = heroBanners[currentSlide];
+  // التأكد من أن currentSlide ضمن النطاق المسموح
+  const safeCurrentSlide = heroBanners.length > 0 ? Math.min(currentSlide, heroBanners.length - 1) : 0;
+  const currentBanner = heroBanners.length > 0 ? heroBanners[safeCurrentSlide] : null;
 
   if (isLoading) {
     return (
@@ -176,31 +164,32 @@ const HomePage = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Hero Banner Carousel */}
-      <section className="relative w-full h-[70vh] max-h-[800px] overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-black/30 to-transparent z-10" />
-        <img
-          src={currentBanner.image}
-          alt={currentBanner.title}
-          className="w-full h-full object-cover transition-all duration-1000 ease-in-out transform"
-          style={{
-            transform: `scale(${1 + (Math.random() * 0.05)})`,
-            transition: 'transform 10s ease-in-out',
-          }}
-          onError={(e) => {
-            e.target.onerror = null;
-            e.target.src = '/images/placeholder-banner.jpg';
-          }}
-        />
-        
-        <div className="absolute inset-0 z-20 flex items-center">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="max-w-2xl text-right rtl:text-right">
-              <Badge className="bg-white text-blue-600 hover:bg-white/90 text-sm font-medium mb-4 px-3 py-1 rounded-full shadow-sm">
-                عروض حصرية
-              </Badge>
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 drop-shadow-lg">
-                {currentBanner.title}
-              </h1>
+      {currentBanner && (
+        <section className="relative w-full h-[70vh] max-h-[800px] overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-black/30 to-transparent z-10" />
+          <img
+            src={currentBanner.image}
+            alt={currentBanner.title}
+            className="w-full h-full object-cover transition-all duration-1000 ease-in-out transform"
+            style={{
+              transform: `scale(${1 + (Math.random() * 0.05)})`,
+              transition: 'transform 10s ease-in-out',
+            }}
+            onError={(e) => {
+              e.target.onerror = null;
+              e.target.src = '/images/placeholder-banner.jpg';
+            }}
+          />
+          
+          <div className="absolute inset-0 z-20 flex items-center">
+            <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="max-w-2xl text-right rtl:text-right">
+                <Badge className="bg-white text-blue-600 hover:bg-white/90 text-sm font-medium mb-4 px-3 py-1 rounded-full shadow-sm">
+                  عروض حصرية
+                </Badge>
+                <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 drop-shadow-lg">
+                  {currentBanner.title}
+                </h1>
               <p className="text-lg md:text-xl text-gray-100 mb-8 max-w-lg leading-relaxed">
                 {currentBanner.description}
               </p>
@@ -254,7 +243,7 @@ const HomePage = () => {
               key={index}
               onClick={() => setCurrentSlide(index)}
               className={`w-3 h-3 rounded-full transition-all duration-300 ${
-                index === currentSlide 
+                index === safeCurrentSlide 
                   ? 'bg-white w-8 scale-110' 
                   : 'bg-white/50 hover:bg-white/70 w-3'
               }`}
@@ -262,7 +251,8 @@ const HomePage = () => {
             />
           ))}
         </div>
-      </section>
+        </section>
+      )}
 
       {/* Categories Grid */}
       <section className="py-16 bg-white">
@@ -283,7 +273,7 @@ const HomePage = () => {
                 <div className="relative w-20 h-20 md:w-24 md:h-24 lg:w-28 lg:h-28 mb-4 rounded-full overflow-hidden shadow-md group-hover:shadow-lg transition-all duration-300">
                   <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-white opacity-70 group-hover:opacity-100 transition-opacity duration-300"></div>
                   <img
-                    src={category.image_url || '/images/placeholder-category.png'}
+                    src={category.image_url ? `${SERVER_ROOT_URL}/${category.image_url}`.replace(/\\/g, '/') : '/images/placeholder-category.png'}
                     alt={category.name}
                     className="relative z-10 w-full h-full object-contain p-3"
                     onError={(e) => {

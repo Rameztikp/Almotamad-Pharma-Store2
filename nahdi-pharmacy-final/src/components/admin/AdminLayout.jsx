@@ -22,7 +22,8 @@ import {
   FaChevronUp,
   FaChevronDown,
   FaWarehouse,
-  FaClipboardList
+  FaClipboardList,
+  FaImages
 } from 'react-icons/fa';
 
 // Menu items configuration
@@ -71,6 +72,11 @@ const menuItems = [
     icon: <FaTags /> 
   },
   { 
+    name: 'إدارة البنرات', 
+    path: '/admin/banners', 
+    icon: <FaImages /> 
+  },
+  { 
     name: 'المستخدمين', 
     path: '/admin/users', 
     icon: <FaUserCog /> 
@@ -97,11 +103,9 @@ const AdminLayout = ({ children }) => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [user, setUser] = useState(null);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [isCreateWholesaleModalOpen, setIsCreateWholesaleModalOpen] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState({});
   const [isHovering, setIsHovering] = useState(false);
-  const profileDropdownRef = useRef(null);
   const sidebarRef = useRef(null);
 
   // Handle sidebar toggle with smooth animation
@@ -137,19 +141,6 @@ const AdminLayout = ({ children }) => {
     }
   };
   
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target)) {
-        setIsProfileDropdownOpen(false);
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
 
   // Toggle menu expansion
   const toggleMenu = (menuName) => {
@@ -402,36 +393,7 @@ const AdminLayout = ({ children }) => {
             </button>
             
             <div className="flex items-center space-x-4 rtl:space-x-reverse">
-              <div className="relative" ref={profileDropdownRef}>
-                <button
-                  onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                  className="flex items-center space-x-2 rtl:space-x-reverse focus:outline-none"
-                >
-                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                    <FaUser className="h-4 w-4" />
-                  </div>
-                  <span className="text-sm font-medium text-gray-700">
-                    {user?.name || 'المستخدم'}
-                  </span>
-                  <FaChevronDown className={`w-3 h-3 text-gray-500 transition-transform duration-200 ${
-                    isProfileDropdownOpen ? 'transform rotate-180' : ''
-                  }`} />
-                </button>
-                
-                {isProfileDropdownOpen && (
-                  <div className="absolute left-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-100">
-                    <button
-                      onClick={handleLogout}
-                      className="block w-full text-right px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-                    >
-                      <div className="flex items-center">
-                        <FaSignOutAlt className="ml-2" />
-                        <span>تسجيل الخروج</span>
-                      </div>
-                    </button>
-                  </div>
-                )}
-              </div>
+              {/* Header content - profile button removed to avoid duplication with AdminNavbar */}
             </div>
           </div>
         </header>

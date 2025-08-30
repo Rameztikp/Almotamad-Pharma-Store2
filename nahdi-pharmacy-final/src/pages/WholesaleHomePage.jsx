@@ -61,47 +61,7 @@ const WholesaleHomePage = () => {
     }
   ];
 
-  // Show upgrade notification for non-wholesale users
-  useEffect(() => {
-    // Only show the upgrade notification if user is logged in and not a wholesale customer
-    if (user && !user.isWholesale) {
-      const timer = setTimeout(() => {
-        toast(
-          (t) => (
-            <div className="text-right">
-              <p className="mb-2">للاستفادة من عروض الجملة المميزة، يرجى ترقية حسابك</p>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setShowUpgradeModal(true);
-                    toast.dismiss(t.id);
-                  }}
-                  className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-                >
-                  ترقية الحساب
-                </button>
-                <button
-                  onClick={() => {
-                    toast.dismiss(t.id);
-                  }}
-                  className="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm"
-                >
-                  لاحقاً
-                </button>
-              </div>
-            </div>
-          ),
-          {
-            duration: 10000,
-            position: 'bottom-left',
-            className: 'rtl text-right',
-          }
-        );
-      }, 2000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [user, setShowUpgradeModal]);
+  // Removed automatic upgrade notification - users can access upgrade via button if needed
 
   // Fetch wholesale categories and products
   useEffect(() => {

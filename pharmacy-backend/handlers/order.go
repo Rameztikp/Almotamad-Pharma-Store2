@@ -14,6 +14,7 @@ import (
 
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
+	"pharmacy-backend/services"
 	"pharmacy-backend/utils"
 )
 
@@ -41,9 +42,12 @@ type OrderRequest struct {
 
 // CreateOrder إنشاء طلب جديد
 func CreateOrder(c *gin.Context) {
+	log.Printf("🛒 CreateOrder handler called - بدء إنشاء طلب جديد")
+	
 	// التحقق من المصادقة
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
+		log.Printf("❌ User not authenticated in CreateOrder")
 		utils.UnauthorizedResponse(c, "User not authenticated")
 		return
 	}
@@ -232,6 +236,82 @@ func CreateOrder(c *gin.Context) {
 	// تسجيل نجاح إنشاء الطلب
 	log.Printf("✅ Order created successfully. ID: %s, Total: %.2f\n", order.ID, order.TotalAmount)
 
+	// تحديد نوع الطلب (تجزئة أم جملة) بناءً على المنتجات
+	var orderItems []models.OrderItem
+	if err := config.DB.Preload("Product").Where("order_id = ?", order.ID).Find(&orderItems).Error; err != nil {
+		log.Printf("⚠️ Failed to load order items for notification: %v", err)
+	}
+	
+	isWholesaleOrder := false
+	for _, item := range orderItems {
+		if item.Product.Type == models.ProductTypeWholesale {
+			isWholesaleOrder = true
+			break
+		}
+	}
+
+	// إنشاء إشعار للإدارة عن الطلب الجديد
+	notificationService := services.NewNotificationService()
+	var notificationType models.NotificationType
+	var title, message string
+	
+	if isWholesaleOrder {
+		notificationType = models.NotificationTypeAdminWholesaleOrder
+		title = "طلب جملة جديد تم إنشاؤه"
+		message = fmt.Sprintf("تم إنشاء طلب جملة جديد برقم %s بقيمة %.2f ريال", order.ID.String()[:8], order.TotalAmount)
+	} else {
+		notificationType = models.NotificationTypeAdminOrderCreated
+		title = "طلب تجزئة جديد تم إنشاؤه"
+		message = fmt.Sprintf("تم إنشاء طلب تجزئة جديد برقم %s بقيمة %.2f ريال", order.ID.String()[:8], order.TotalAmount)
+	}
+	
+	adminMetadata := map[string]interface{}{
+		"order_id":     order.ID.String(),
+		"user_id":      userUUID.String(),
+		"total_amount": order.TotalAmount,
+		"status":       order.Status,
+		"order_type":   map[bool]string{true: "wholesale", false: "retail"}[isWholesaleOrder],
+		"created_at":   order.CreatedAt,
+	}
+	
+	log.Printf("🔔 محاولة إنشاء إشعار إداري - النوع: %s، العنوان: %s", notificationType, title)
+	err = notificationService.CreateAdminNotification(
+		notificationType,
+		title,
+		message,
+		adminMetadata,
+		&order.ID,
+	)
+	if err != nil {
+		// لا نوقف العملية إذا فشل إنشاء الإشعار
+		log.Printf("⚠️ فشل في إنشاء إشعار الإدارة: %v", err)
+	} else {
+		log.Printf("✅ تم إنشاء إشعار الإدارة للطلب بنجاح: %s - النوع: %s", order.ID.String()[:8], notificationType)
+	}
+
+	// إنشاء إشعار للمستخدم صاحب الطلب
+	userTitle := "تم استلام طلبك بنجاح"
+	userMessage := fmt.Sprintf("تم استلام طلبك رقم %s بنجاح وسيتم معالجته قريبًا.", order.ID.String()[:8])
+	userMetadata := map[string]interface{}{
+		"order_id": order.ID.String(),
+		"status":   order.Status,
+	}
+
+	log.Printf("🔔 محاولة إنشاء إشعار للمستخدم - العنوان: %s", userTitle)
+	_, err = notificationService.CreateNotification(
+		userUUID,
+		models.NotificationTypeOrderCreated,
+		userTitle,
+		userMessage,
+		userMetadata,
+		&order.ID,
+	)
+	if err != nil {
+		log.Printf("⚠️ فشل في إنشاء إشعار المستخدم: %v", err)
+	} else {
+		log.Printf("✅ تم إنشاء إشعار المستخدم للطلب بنجاح: %s", order.ID.String()[:8])
+	}
+
 	// بث إشعار إنشاء الطلب للمستخدم عبر SSE
 	Notifier.BroadcastToUser(userUUID, "order_created", gin.H{
 		"order_id":     order.ID.String(),
@@ -241,6 +321,7 @@ func CreateOrder(c *gin.Context) {
 	})
 
 	// إرجاع استجابة ناجحة
+	log.Printf("✅ تم إنشاء الطلب بنجاح: ID=%s, Amount=%.2f", order.ID.String()[:8], order.TotalAmount)
 	utils.SuccessResponse(c, "تم إنشاء الطلب بنجاح", gin.H{
 		"id":           order.ID,
 		"order_number": order.ID.String(),
@@ -405,4 +486,3 @@ func CancelOrder(c *gin.Context) {
 	
 	utils.SuccessResponse(c, "Order cancelled successfully", order)
 }
-

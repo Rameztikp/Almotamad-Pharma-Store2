@@ -123,10 +123,11 @@ func AdminLogin(c *gin.Context) {
 		SameSite: sameSiteMode,
 	})
 
-	// إرجاع الاستجابة بدون التوكنات
+	// إرجاع الاستجابة مع التوكن للاستخدام في localStorage
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"user":    user,
+		"token":   accessToken,
 	})
 }
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Heart, ShoppingCart, Package } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { toast } from 'react-hot-toast';
+import { SERVER_ROOT_URL } from '../services/api';
 
 // صورة افتراضية محلية
 const defaultImage = '/images/ass.jpg';
@@ -23,7 +24,7 @@ const ProductCard = ({ product, onToggleFavorite, isFavorite: isFavoriteProp }) 
         originalPrice: 0,
         discount: 0,
         rating: 0,
-        image: 'https://via.placeholder.com/300x300?text=No+Image',
+        image: defaultImage,
         inStock: false,
         stock_quantity: 0,
         type: 'retail',
@@ -65,6 +66,18 @@ const ProductCard = ({ product, onToggleFavorite, isFavorite: isFavoriteProp }) 
   const isFavorite = typeof isFavoriteProp === 'boolean' 
     ? isFavoriteProp 
     : favoriteItems?.some(item => item.id === productData.id) || false;
+
+  const getFullImageUrl = (imagePath) => {
+    if (!imagePath || imagePath === defaultImage) {
+      return defaultImage;
+    }
+    if (imagePath.startsWith('http') || imagePath.startsWith('blob:')) {
+      return imagePath;
+    }
+    return `${SERVER_ROOT_URL}${imagePath}`;
+  };
+
+  const finalImageUrl = getFullImageUrl(productData.image);
 
   const toggleFavorite = async (e) => {
     e.preventDefault();
@@ -194,7 +207,7 @@ const ProductCard = ({ product, onToggleFavorite, isFavorite: isFavoriteProp }) 
       {/* Product Image */}
       <div className="relative pt-[100%] overflow-hidden">
         <img 
-          src={imgError ? defaultImage : (productData.image || defaultImage)}
+          src={imgError ? defaultImage : finalImageUrl}
           alt={productData.name}
           className="absolute top-0 right-0 w-full h-full object-cover transition-transform duration-500"
           style={{
@@ -204,7 +217,7 @@ const ProductCard = ({ product, onToggleFavorite, isFavorite: isFavoriteProp }) 
           onError={(e) => {
             console.error('فشل في تحميل صورة المنتج:', {
               productId: productData.id,
-              imageUrl: productData.image,
+              imageUrl: finalImageUrl,
               error: 'فشل في تحميل الصورة'
             });
             setImgError(true);

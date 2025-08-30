@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import AdminNavbar from '../../components/admin/AdminNavbar';
 import { useNavigate, Link } from 'react-router-dom';
 import { adminApi } from '../../services/adminApi';
 import { toast } from 'react-toastify';
@@ -70,7 +69,6 @@ const DashboardPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stats, setStats] = useState({
     totalSales: 0,
     totalOrders: 0,
@@ -264,12 +262,6 @@ const DashboardPage = () => {
       if (intervalId) clearInterval(intervalId);
     };
   }, [fetchDashboardData]);
-  
-  const toggleSidebar = () => {
-    setSidebarOpen(!sidebarOpen);
-  };
-
-  // handleRefresh is already defined above with proper loading state and error handling
 
   // Format time for activity logs
   const formatTime = (dateString) => {
@@ -288,11 +280,9 @@ const DashboardPage = () => {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      <AdminNavbar sidebarOpen={sidebarOpen} toggleSidebar={toggleSidebar} />
-      <div className="flex flex-1 overflow-hidden">
-        {/* Main Content */}
-        <div className="flex-1 overflow-auto p-4 md:p-6 transition-all duration-300 ease-in-out">
+    <div className="space-y-6">
+      {/* Main Content */}
+      <div className="overflow-auto transition-all duration-300 ease-in-out">
           <div className="space-y-6">
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
@@ -555,7 +545,6 @@ const DashboardPage = () => {
             </div>
           </div>
         </div>
-      </div>
     </div>
   );
 };

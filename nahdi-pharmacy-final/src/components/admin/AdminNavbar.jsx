@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { FiMenu, FiBell, FiUser, FiSettings, FiLogOut, FiChevronDown } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
+import AdminNotificationCenter from '../Notifications/AdminNotificationCenter';
 
 const AdminNavbar = ({ toggleSidebar }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -50,16 +51,8 @@ const AdminNavbar = ({ toggleSidebar }) => {
 
           {/* Left side - Navigation items */}
           <div className="flex items-center space-x-4 space-x-reverse">
-            {/* Notifications */}
-            <button className="text-gray-300 hover:bg-gray-700 hover:text-white p-2 rounded-full">
-              <span className="sr-only">عرض الإشعارات</span>
-              <div className="relative">
-                <FiBell className="h-6 w-6" />
-                <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full text-xs flex items-center justify-center">
-                  3
-                </span>
-              </div>
-            </button>
+            {/* Admin Notifications */}
+            <AdminNotificationCenter />
 
             {/* Profile dropdown */}
             <div className="relative" ref={profileRef}>

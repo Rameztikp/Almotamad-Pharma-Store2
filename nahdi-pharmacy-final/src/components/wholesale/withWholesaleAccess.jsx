@@ -4,6 +4,7 @@ import { useWholesaleAccess } from '../../hooks/useWholesaleAccess.jsx';
 import WholesaleUpgradeModal from './WholesaleUpgradeModal';
 import { useUserAuth } from '../../context/UserAuthContext';
 import { toast } from 'react-hot-toast';
+import wholesaleService from '../../services/wholesaleService';
 
 const withWholesaleAccess = (WrappedComponent) => {
   return function WithWholesaleAccess(props) {
@@ -11,12 +12,37 @@ const withWholesaleAccess = (WrappedComponent) => {
     const location = useLocation();
     const { showUpgradeModal, setShowUpgradeModal } = useWholesaleAccess();
     const [hasShownUpgrade, setHasShownUpgrade] = useState(false);
+    const [requestStatus, setRequestStatus] = useState(null);
 
+    // Check for existing upgrade request
     useEffect(() => {
-      // Only show upgrade notification if user is logged in, not a wholesale user, and hasn't seen it yet
+      const checkUpgradeRequest = async () => {
+        if (isAuthenticated() && user && 
+            (user.accountType !== 'wholesale' || !user.wholesale_access)) {
+          try {
+            console.log('🔍 فحص حالة طلب الترقية الحالي...');
+            const response = await wholesaleService.getCurrentRequestStatus();
+            console.log('📋 حالة الطلب:', response);
+            setRequestStatus(response?.status || null);
+          } catch (error) {
+            console.log('ℹ️ لا يوجد طلب ترقية حالي');
+            setRequestStatus(null);
+          }
+        }
+      };
+
+      checkUpgradeRequest();
+    }, [isAuthenticated, user]);
+
+    // Show upgrade notification for new users without pending requests
+    useEffect(() => {
+      // Only show upgrade notification if user is logged in, not a wholesale user, 
+      // hasn't seen it yet, and doesn't have a pending request
       if (isAuthenticated() && user && 
-          (user.accountType !== 'wholesale' || !user.wholesale_access) && 
-          !hasShownUpgrade) {
+          user.accountType !== 'wholesale' && 
+          !user.wholesale_access && 
+          !hasShownUpgrade && 
+          requestStatus !== 'pending') {
         const timer = setTimeout(() => {
           toast(
             (t) => (
@@ -63,7 +89,7 @@ const withWholesaleAccess = (WrappedComponent) => {
 
         return () => clearTimeout(timer);
       }
-    }, [isAuthenticated, user, hasShownUpgrade, setShowUpgradeModal]);
+    }, [isAuthenticated, user, hasShownUpgrade, setShowUpgradeModal, requestStatus]);
 
     const handleUpgradeSuccess = () => {
       setShowUpgradeModal(false);

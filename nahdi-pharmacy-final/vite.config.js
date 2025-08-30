@@ -6,12 +6,46 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(),tailwindcss()],
+  esbuild: {
+    loader: 'jsx',
+    include: /src\/.*\.jsx?$/,
+    exclude: [],
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: {
+        '.js': 'jsx',
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
   server: {
+    // WebSocket configuration for HMR
+    hmr: {
+      protocol: 'ws',
+      host: 'localhost',
+      port: 5173,
+      clientPort: 5173,
+    },
+    // WebSocket proxy configuration
+    ws: true,
+    // Watch configuration
+    watch: {
+      usePolling: true,
+      interval: 100,
+      binaryInterval: 300,
+    },
+    // Force Vite to explicitly use host
+    host: '0.0.0.0',
+    strictPort: true,
+    port: 5173,
+    // CORS headers
+    cors: false,
+    // Proxy configuration
     proxy: {
       // Handle all API routes under /api
       '^/api': {
@@ -106,12 +140,16 @@ export default defineConfig({
         }
       }
     },
-    cors: false, // Disable Vite's default CORS headers
-    port: 5173,  // Ensure this matches your dev server port
-    strictPort: true,
-    host: true,  // Allow connections from local network
-    hmr: {
-      clientPort: 5173, // Important for WebSocket in some network setups
+    // Additional headers for CORS
+    headers: {
+      'Access-Control-Allow-Origin': 'http://localhost:5173',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Credentials': 'true',
     },
+    // Proxy timeout settings
+    proxyTimeout: 60000,
+    // Disable host check for local development
+    disableHostCheck: true,
   },
 })

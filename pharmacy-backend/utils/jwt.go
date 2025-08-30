@@ -28,7 +28,8 @@ func GenerateJWT(userID uuid.UUID, email string, role string) (string, error) {
 	// الحصول على مفتاح التوقيع من متغيرات البيئة
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-secret-key" // يجب تغييره في الإنتاج
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return "", errors.New("JWT_SECRET environment variable is required for security")
 	}
 
 	// تعريف صلاحية التوكن (24 ساعة)
@@ -62,7 +63,8 @@ func VerifyJWT(tokenString string) (jwt.MapClaims, error) {
 	// الحصول على مفتاح التوقيع من متغيرات البيئة
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-secret-key" // يجب أن يكون نفس المفتاح المستخدم في التوقيع
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return nil, errors.New("JWT_SECRET environment variable is required for security")
 	}
 
 	// التحقق من صيغة التوكن
@@ -112,7 +114,8 @@ func GenerateTokens(userID uuid.UUID, email string, role string) (string, string
 	// إنشاء توكن التحديث (يستمر لمدة أطول)
 	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return "", "", errors.New("JWT_REFRESH_SECRET environment variable is required for security")
 	}
 
 	expirationTime := time.Now().Add(RefreshTokenExpiry)
@@ -140,7 +143,8 @@ func RefreshAccessToken(refreshTokenString string) (string, error) {
 	// التحقق من صحة توكن التحديث
 	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return "", errors.New("JWT_REFRESH_SECRET environment variable is required for security")
 	}
 
 	token, err := jwt.ParseWithClaims(refreshTokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
@@ -183,7 +187,8 @@ func GenerateRefreshToken(userID uuid.UUID, email string, role string) (string, 
 	// الحصول على مفتاح التوقيع من متغيرات البيئة
 	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-refresh-secret-key" // يجب تغييره في الإنتاج
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return "", errors.New("JWT_REFRESH_SECRET environment variable is required for security")
 	}
 
 	// تعريف صلاحية التوكن (7 أيام)
@@ -217,7 +222,8 @@ func VerifyRefreshToken(tokenString string) (jwt.MapClaims, error) {
 	// الحصول على مفتاح التوقيع من متغيرات البيئة
 	jwtSecret := os.Getenv("JWT_REFRESH_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "your-refresh-secret-key" // يجب أن يكون نفس المفتاح المستخدم في التوقيع
+		// 🛡️ إصلاح أمني: منع استخدام مفتاح افتراضي ضعيف
+		return nil, errors.New("JWT_REFRESH_SECRET environment variable is required for security")
 	}
 
 	// التحقق من صيغة التوكن

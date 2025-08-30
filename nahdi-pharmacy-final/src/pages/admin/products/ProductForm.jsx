@@ -272,17 +272,20 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, type }) => {
       }
       
       // 2. Prepare product data with type
+      const { stock, ...formDataWithoutStock } = formData; // Remove stock field
+      // Convert images to array of URL strings only
+      const imageUrlStrings = imageUrls.map(img => typeof img === 'string' ? img : img.url);
       const productData = {
-        ...formData,
-        images: imageUrls,
+        ...formDataWithoutStock,
+        images: imageUrlStrings,
         type: type || 'retail', // تأكيد نوع المنتج
         // تحويل القيم الرقمية
         price: parseFloat(formData.price) || 0,
-        stock: parseInt(formData.stock, 10) || 0,
+        stock_quantity: parseInt(formData.stock, 10) || 0, // Backend expects stock_quantity
         // تعيين القيم الافتراضية للحقول الاختيارية
         brand: formData.brand || '',
-        sku: formData.sku || '',
-        barcode: formData.barcode || ''
+        sku: formData.sku || `SKU-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        barcode: formData.barcode || `BC-${Date.now()}`
       };
       
       // 3. Add medicine-specific fields if this is a medicine
@@ -302,9 +305,17 @@ const ProductForm = ({ isOpen, onClose, onSubmit, product, type }) => {
       }
       
       console.log('Submitting product data:', JSON.stringify(productData, null, 2));
+      console.log('Submitting product data:', productData);
       
       // 4. Submit the product data
-      await onSubmit(productData);
+      try {
+        console.log('About to call onSubmit...');
+        await onSubmit(productData);
+        console.log('onSubmit completed successfully');
+      } catch (submitError) {
+        console.error('Error in onSubmit:', submitError);
+        throw submitError;
+      }
       
       // 5. Reset form
       setFormData({

@@ -6,7 +6,13 @@ const API_BASE_URL = isDevelopment
   : import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1";
 const API_TIMEOUT = import.meta.env.VITE_API_TIMEOUT || 30000; // Increased timeout for development
 
+// URL for static assets like images
+export const SERVER_ROOT_URL = isDevelopment
+  ? "http://localhost:8080"
+  : (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1").replace('/api/v1', '');
+
 console.log("📦 API Configuration:", {
+  serverRoot: SERVER_ROOT_URL,
   mode: import.meta.env.MODE,
   baseURL: API_BASE_URL,
   usingProxy: isDevelopment,
@@ -152,16 +158,65 @@ class ApiService {
     console.log("✅ تم مسح جميع بيانات المصادقة");
   }
 
-  // Create headers for requests
-  getHeaders(isFormData = false) {
+  // Build headers
+  buildHeaders(isFormData = false, additionalHeaders = {}) {
     const headers = new Headers();
 
-    // Set Content-Type if not FormData
+    // Add additional headers first
+    Object.entries(additionalHeaders).forEach(([key, value]) => {
+      headers.set(key, value);
+    });
+
+    // Set content type for JSON requests
     if (!isFormData) {
       headers.set("Content-Type", "application/json");
     }
 
-    // Do not attach Authorization header; auth is cookie-based
+    // Add Authorization header if token is available
+    const adminToken = localStorage.getItem('admin_token') || localStorage.getItem('adminToken') || localStorage.getItem('admin_auth_token');
+    const clientToken = localStorage.getItem('client_auth_token');
+    
+    // Debug logging for token availability
+    console.log('🔍 Token Debug:', {
+      adminToken: adminToken ? `${adminToken.substring(0, 20)}...` : 'null',
+      clientToken: clientToken ? `${clientToken.substring(0, 20)}...` : 'null',
+      localStorage_keys: Object.keys(localStorage),
+      usingCookies: 'HttpOnly cookies are used for authentication'
+    });
+    
+    // Determine which token to use based on current context
+    const isAdminPanel = window.location.pathname.startsWith('/admin');
+    let token = null;
+    
+    if (isAdminPanel) {
+      // In admin panel, only use admin token
+      token = adminToken;
+      if (!token) {
+        console.log('⚠️ No admin token found in admin panel context');
+      }
+    } else {
+      // In regular user area, only use client token
+      token = clientToken;
+      if (!token) {
+        console.log('⚠️ No client token found in user context');
+      }
+    }
+    
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+      console.log('✅ Authorization header added with Bearer token');
+    } else {
+      // For HttpOnly cookie authentication, we don't need to add Authorization header
+      // The browser will automatically include the cookies
+      console.log('ℹ️ Using HttpOnly cookies for authentication - no Authorization header needed');
+    }
+
+    // Log all headers being sent
+    const headersObj = {};
+    headers.forEach((value, key) => {
+      headersObj[key] = key === 'Authorization' ? `Bearer ${value.substring(7, 27)}...` : value;
+    });
+    console.log('📤 Request headers:', headersObj);
 
     return headers;
   }
@@ -193,10 +248,14 @@ class ApiService {
           
           // إعادة إرسال الطلب الأصلي
           if (options.method && options.method.toLowerCase() === 'get') {
-            return this.get(url.replace(this.baseURL, ''), options.params);
+            // Extract endpoint from full URL properly - keep leading slash
+            const endpoint = url.replace(this.baseURL, '') || url;
+            return this.get(endpoint, options.params);
           } else {
             const method = options.method || 'GET';
-            return this.request(method, url, options.data, options.isFormData, 0, retryOptions);
+            // Extract endpoint from full URL properly - keep leading slash
+            const endpoint = url.replace(this.baseURL, '') || url;
+            return this.request(method, endpoint, options.data, options.isFormData, 0, retryOptions);
           }
         }
       } catch (refreshError) {
@@ -355,10 +414,19 @@ class ApiService {
     // Set default config
     const config = {
       method,
-      headers: this.getHeaders(isFormData),
-      body: isFormData ? data : data ? JSON.stringify(data) : undefined,
+      headers: this.buildHeaders(isFormData),
       credentials: "include", // Important for cookies/sessions
     };
+
+    if (data) {
+      if (data instanceof FormData) {
+        // Let the browser set the Content-Type header for FormData
+        delete config.headers['Content-Type'];
+        config.body = data;
+      } else {
+        config.body = JSON.stringify(data);
+      }
+    }
 
     // Build URL with query params if GET request
     let url = `${this.baseURL}${endpoint}`;
@@ -464,7 +532,7 @@ class ApiService {
 
       const response = await fetch(url.toString(), {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: this.buildHeaders(),
         credentials: "include", // Important for sending cookies with cross-origin requests
       });
 

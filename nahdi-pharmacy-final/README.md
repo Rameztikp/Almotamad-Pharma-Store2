@@ -157,7 +157,7 @@ pnpm run dev
 
 # فتح المتصفح على
 http://localhost:5173
-```
+```cd Almotamad-Pharma-Store-1
 
 ### بناء المشروع للإنتاج
 ```bash

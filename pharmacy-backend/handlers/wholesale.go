@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
+	"pharmacy-backend/services"
 	"pharmacy-backend/utils"
 	"strings"
 	"time"
@@ -166,6 +167,35 @@ func UpgradeToWholesale(c *gin.Context) {
 		return
 	}
 	tx.Commit()
+
+	// إنشاء إشعار للإدارة عن طلب الترقية الجديد
+	notificationService := services.NewNotificationService()
+	adminMetadata := map[string]interface{}{
+		"request_id":   request.ID.String(),
+		"user_id":      userID.(uuid.UUID).String(),
+		"company_name": request.CompanyName,
+		"status":       request.Status,
+		"created_at":   request.CreatedAt,
+	}
+	
+	err = notificationService.CreateAdminNotification(
+		models.NotificationTypeAdminWholesaleSubmitted,
+		"طلب ترقية حساب جملة جديد",
+		fmt.Sprintf("تم تقديم طلب ترقية حساب جملة جديد من شركة %s", request.CompanyName),
+		adminMetadata,
+		nil,
+	)
+	if err != nil {
+		log.Printf("⚠️ فشل في إنشاء إشعار الإدارة لطلب الترقية: %v", err)
+	}
+
+	// Send notification to user about request submission
+	Notifier.BroadcastToUser(userID.(uuid.UUID), "wholesale_request_submitted", gin.H{
+		"request_id": request.ID.String(),
+		"status":     request.Status,
+		"message":    "تم تقديم طلب ترقية حساب الجملة بنجاح وهو الآن قيد المراجعة",
+		"created_at": request.CreatedAt,
+	})
 
 	// Return success response
 	utils.SuccessResponse(c, "تم تقديم طلب الترقية بنجاح", gin.H{
@@ -391,23 +421,73 @@ func UpdateRequestStatus(c *gin.Context) {
 
 	log.Printf("✅ تمت معالجة الطلب بنجاح. الحالة: %s", req.Status)
 
+	// Create notification service
+	notificationService := services.NewNotificationService()
+
+	// Create and save notification to database
+	var notificationTitle, notificationMessage string
+	var notificationType models.NotificationType
+
+	if req.Status == models.RequestStatusApproved {
+		notificationTitle = "تمت الموافقة على طلب ترقية حساب الجملة"
+		notificationMessage = "تهانينا! تمت الموافقة على طلب ترقية حساب الجملة الخاص بك"
+		notificationType = "success"
+	} else if req.Status == models.RequestStatusRejected {
+		notificationTitle = "تم رفض طلب ترقية حساب الجملة"
+		notificationMessage = "تم رفض طلب ترقية حساب الجملة الخاص بك"
+		if req.RejectionReason != "" {
+			notificationMessage += fmt.Sprintf(". السبب: %s", req.RejectionReason)
+		}
+		notificationType = "error"
+	}
+
+	// Save notification to database
+	if notificationTitle != "" {
+		metadata := map[string]interface{}{
+			"request_id":       request.ID.String(),
+			"status":           string(request.Status),
+			"rejection_reason": req.RejectionReason,
+			"processed_at":     now,
+		}
+
+		_, err := notificationService.CreateNotification(
+			request.UserID,
+			notificationType,
+			notificationTitle,
+			notificationMessage,
+			metadata,
+			nil,
+		)
+		
+		if err != nil {
+			log.Printf("⚠️ فشل في حفظ الإشعار: %v", err)
+		} else {
+			log.Printf("✅ تم حفظ الإشعار في قاعدة البيانات للمستخدم: %s", user.ID.String())
+		}
+	}
+
 	// بث إشعار حالة طلب الجملة للمستخدم عبر SSE
 	approved := req.Status == models.RequestStatusApproved
 	if approved {
+		log.Printf("📢 إرسال إشعار الموافقة للمستخدم: %s", user.ID.String())
 		Notifier.BroadcastToUser(user.ID, "wholesale_approved", gin.H{
-			"request_id": request.ID.String(),
-			"status":     request.Status,
+			"request_id":   request.ID.String(),
+			"status":       request.Status,
+			"message":      "تهانينا! تمت الموافقة على طلب ترقية حساب الجملة الخاص بك",
 			"processed_at": now,
 		})
 	} else if req.Status == models.RequestStatusRejected {
+		log.Printf("📢 إرسال إشعار الرفض للمستخدم: %s", user.ID.String())
 		Notifier.BroadcastToUser(user.ID, "wholesale_rejected", gin.H{
 			"request_id":       request.ID.String(),
 			"status":           request.Status,
 			"rejection_reason": req.RejectionReason,
+			"message":          "تم رفض طلب ترقية حساب الجملة الخاص بك",
 			"processed_at":     now,
 		})
 	}
 	// Always send a generic update event as well
+	log.Printf("📢 إرسال إشعار تحديث عام للمستخدم: %s", user.ID.String())
 	Notifier.BroadcastToUser(user.ID, "wholesale_request_updated", gin.H{
 		"request_id":       request.ID.String(),
 		"status":           request.Status,

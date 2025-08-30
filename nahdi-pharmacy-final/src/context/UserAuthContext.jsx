@@ -16,11 +16,14 @@ export const UserAuthProvider = ({ children }) => {
   // UserAuthContext يتعامل فقط مع المستخدم العادي
   // المسؤول له AuthContext منفصل
   
-  // دالة مساعدة للحصول على مفتاح توكن المستخدم العادي
-  const getTokenKey = () => 'client_auth_token';
-  
-  // دالة مساعدة للحصول على مفتاح refresh token المستخدم العادي
-  const getRefreshTokenKey = () => 'client_refresh_token';
+  // دالة للتحقق من وجود مصادقة صالحة (HttpOnly cookies أو localStorage)
+  const isAuthenticated = () => {
+    // Check for user data (indicates valid session with HttpOnly cookies)
+    const userData = localStorage.getItem('client_user_data');
+    // Check for admin tokens (admin still uses localStorage tokens)
+    const adminToken = localStorage.getItem('admin_token') || localStorage.getItem('adminToken');
+    return !!(userData || adminToken);
+  };
 
   // Load user data on initial render
   const loadUser = useCallback(async () => {
@@ -129,8 +132,15 @@ export const UserAuthProvider = ({ children }) => {
       console.error("Logout error:", error);
       // Continue with local logout even if server logout fails
     } finally {
-      // مسح بيانات المستخدم العادي فقط
-      const clientKeys = [ 'client_user_data', 'userData' ];
+      // مسح بيانات المستخدم العادي والتوكنات فقط
+      const clientKeys = [ 
+        'client_user_data', 
+        'client_auth_token',
+        'client_refresh_token',
+        'userData',
+        'authToken',
+        'token'
+      ];
       clientKeys.forEach(key => {
         if (localStorage.getItem(key)) {
           localStorage.removeItem(key);
@@ -160,7 +170,7 @@ export const UserAuthProvider = ({ children }) => {
     }
   };
 
-  const isAuthenticated = () => {
+  const checkAuthStatus = () => {
     // Cookie-based: authenticated if we have a user loaded
     if (!user) {
       loadUser();
@@ -194,7 +204,7 @@ export const UserAuthProvider = ({ children }) => {
         loading,
         login,
         logout,
-        isAuthenticated,
+        isAuthenticated: checkAuthStatus,
         setUser,
         refreshUser,
       }}

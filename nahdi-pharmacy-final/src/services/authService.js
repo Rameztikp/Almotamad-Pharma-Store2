@@ -225,8 +225,29 @@ const authService = {
   // مسح بيانات المصادقة المحلية (فقط المستخدم العادي)
   clearAuthData: function () {
     try {
-      // مسح بيانات المستخدم العادي فقط (لا توكنات بعد الآن)
-      localStorage.removeItem('client_user_data');
+      // مسح بيانات المستخدم العادي والتوكنات
+      const clientKeys = [
+        'client_user_data',
+        'client_auth_token',
+        'client_refresh_token',
+        'userData',
+        'authToken',
+        'token'
+      ];
+      
+      clientKeys.forEach(key => {
+        if (localStorage.getItem(key)) {
+          localStorage.removeItem(key);
+          console.log(`✅ تم مسح: ${key}`);
+        }
+      });
+
+      // التأكد من عدم مسح بيانات الأدمن
+      const adminToken = localStorage.getItem('admin_auth_token') || localStorage.getItem('admin_token') || localStorage.getItem('adminToken');
+      const adminData = localStorage.getItem('adminData');
+      if (adminToken || adminData) {
+        console.log('✅ توكنات المسؤول محفوظة - لم يتم مسحها');
+      }
 
       // إرسال حدث لتحديث حالة المصادقة
       window.dispatchEvent(
@@ -269,6 +290,34 @@ const authService = {
         if (userData) {
           // تحديد السياق الحالي (لوحة الإدارة أم الواجهة العامة)
           const isAdmin = window.location.pathname.startsWith('/admin');
+          
+          // فحص ما إذا كان المستخدم قد سجل خروجه - مع دعم HttpOnly cookies
+          // إذا حصلنا على استجابة ناجحة من /auth/me فهذا يعني أن المصادقة صالحة (سواء كانت HttpOnly cookies أو localStorage tokens)
+          let hasValidAuth = true;
+            
+          if (!hasValidAuth) {
+            console.log('⚠️ لا توجد مصادقة صالحة - لن يتم حفظ بيانات المستخدم');
+            return null;
+          }
+          
+          // التحقق من تطابق دور المستخدم مع السياق الحالي
+          const userRole = userData.role || 'user';
+          const isUserAdmin = userRole === 'admin' || userRole === 'super_admin';
+          
+          if (isAdmin && !isUserAdmin) {
+            console.log('⚠️ مستخدم عادي يحاول الوصول لمنطقة الإدارة - سيتم تسجيل الخروج');
+            this.clearAuthData();
+            window.location.href = '/login';
+            return null;
+          }
+          
+          // تم إزالة إعادة التوجيه التلقائي للمسؤولين - يمكن للمسؤول الوصول للمتجر العادي
+          // if (!isAdmin && isUserAdmin) {
+          //   console.log('⚠️ مسؤول يحاول الوصول للمنطقة العامة - سيتم إعادة التوجيه');
+          //   window.location.href = '/admin/dashboard';
+          //   return null;
+          // }
+          
           // دمج البيانات الجديدة مع المخزنة للحفاظ على الحقول التي لا يعيدها الخادم (مثل phone)
           let storedUser = {};
           try {
