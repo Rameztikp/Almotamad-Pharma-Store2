@@ -77,12 +77,22 @@ func SetupCloudinary() {
 func ConnectDatabase() {
 	// Setup Cloudinary
 	SetupCloudinary()
-	config := GetDatabaseConfig()
-
-	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Riyadh",
-		config.Host, config.User, config.Password, config.DBName, config.Port, config.SSLMode,
-	)
+	
+	var dsn string
+	
+	// Try DATABASE_URL first (Railway format)
+	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+		dsn = databaseURL
+		log.Println("Using DATABASE_URL for connection")
+	} else {
+		// Fallback to individual environment variables
+		config := GetDatabaseConfig()
+		dsn = fmt.Sprintf(
+			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Riyadh",
+			config.Host, config.User, config.Password, config.DBName, config.Port, config.SSLMode,
+		)
+		log.Println("Using individual DB variables for connection")
+	}
 	
 	// Enable SQL query logging
 	newLogger := logger.New(
