@@ -1,0 +1,31 @@
+# انسخ هذا المحتوى إلى ملف .env.production في مجلد pharmacy-backend
+
+# Database Configuration - Production (عدّل حسب قاعدة البيانات الجديدة)
+DB_HOST=your-production-db-host
+DB_PORT=5432
+DB_USER=your-production-db-user
+DB_PASSWORD=your-secure-production-password
+DB_NAME=pharmacy_db
+DB_SSLMODE=require
+
+# Server Configuration
+PORT=8080
+GIN_MODE=release
+
+# CORS Configuration - عدّل هذه القيم للنطاقات الجديدة
+CORS_ALLOW_ORIGINS=https://your-frontend-domain.com,https://www.your-frontend-domain.com
+CORS_ALLOW_CREDENTIALS=true
+CORS_ALLOW_METHODS=GET,HEAD,PUT,PATCH,POST,DELETE
+CORS_ALLOW_HEADERS=Content-Type,Authorization
+
+# JWT Secrets - استخدم نفس القيم الموجودة (آمنة بالفعل)
+JWT_SECRET=K8mN2pQ5rT9wX3zA6bC1dF4gH7jL0oP3sV8yB5eI2nR6uY9xA2cF5hK8mP1qT4w7
+JWT_REFRESH_SECRET=M9nQ2rT5wX8zA1bC4dF7gH0jL3oP6sV9yB2eI5nR8uY1xA4cF7hK0mP3qT6w9zB2
+JWT_ADMIN_SECRET=P3qT6w9zB2eI5nR8uY1xA4cF7hK0mP3sV6yC9dG2fJ5lO8rU1vZ4xA7bE0hK3nQ6
+JWT_ADMIN_REFRESH_SECRET=S6vZ9yC2fJ5lO8rU1xA4bE7hK0nQ3tW6zA9cF2gI5mP8sV1yB4eH7jL0oR3uX6w9
+
+# Cloudinary (نفس القيمة - لا تغيرها)
+CLOUDINARY_URL=cloudinary://388867643273738:YafuRvQ0f3GYWP3u2FqyBJYa63w@drl9ew4rw
+
+# FCM Server Key (اتركها فارغة إذا لم تكن تستخدمها)
+FCM_SERVER_KEY=

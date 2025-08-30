@@ -4,11 +4,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
 	"pharmacy-backend/services"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // FCMHandler handles FCM related operations

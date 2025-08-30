@@ -53,24 +53,28 @@ func (ns *NotificationService) CreateNotification(userID uuid.UUID, notification
 	return notification, nil
 }
 
-// GetUserNotifications retrieves notifications for a user (excludes admin notifications)
+// GetUserNotifications retrieves notifications for a user (includes user-specific notifications and filters out only admin-specific notifications)
 func (ns *NotificationService) GetUserNotifications(userID uuid.UUID, limit int, onlyUnread bool) ([]models.Notification, error) {
 	var notifications []models.Notification
-	query := ns.db.Where("user_id = ? AND type NOT IN (?)", userID, []string{
-		string(models.NotificationTypeAdminOrderCreated),
-		string(models.NotificationTypeAdminOrderUpdated),
+
+	// Base query for user's notifications
+	query := ns.db.Where("user_id = ?", userID)
+
+	// Only filter out admin-specific notifications that users shouldn't see
+	query = query.Where("type NOT IN (?)", []string{
 		string(models.NotificationTypeAdminWholesaleOrder),
 		string(models.NotificationTypeAdminWholesaleSubmitted),
 	})
-	
+
 	if onlyUnread {
 		query = query.Where("is_read = ?", false)
 	}
-	
-	if err := query.Order("created_at DESC").Limit(limit).Find(&notifications).Error; err != nil {
-		return nil, err
+
+	err := query.Order("created_at DESC").Limit(limit).Find(&notifications).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user notifications: %v", err)
 	}
-	
+
 	return notifications, nil
 }
 
@@ -88,16 +92,23 @@ func (ns *NotificationService) MarkAllAsRead(userID uuid.UUID) error {
 		Update("is_read", true).Error
 }
 
-// GetUnreadCount returns the count of unread notifications for a user (excludes admin notifications)
+// GetUnreadCount returns the count of unread notifications for a user (excludes only admin-specific notifications)
 func (ns *NotificationService) GetUnreadCount(userID uuid.UUID) (int64, error) {
 	var count int64
-	err := ns.db.Model(&models.Notification{}).Where("user_id = ? AND is_read = ? AND type NOT IN (?)", userID, false, []string{
-		string(models.NotificationTypeAdminOrderCreated),
-		string(models.NotificationTypeAdminOrderUpdated),
-		string(models.NotificationTypeAdminWholesaleOrder),
-		string(models.NotificationTypeAdminWholesaleSubmitted),
-	}).Count(&count).Error
-	return count, err
+
+	err := ns.db.Model(&models.Notification{}).
+		Where("user_id = ? AND is_read = ?", userID, false).
+		Where("type NOT IN (?)", []string{
+			string(models.NotificationTypeAdminWholesaleOrder),
+			string(models.NotificationTypeAdminWholesaleSubmitted),
+		}).
+		Count(&count).Error
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to get unread count: %v", err)
+	}
+
+	return count, nil
 }
 
 // GetAllAdminUserIDs returns all admin user IDs

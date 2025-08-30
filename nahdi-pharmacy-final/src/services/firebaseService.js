@@ -125,7 +125,7 @@ const subscribeToPushNotifications = async (userId) => {
       return false;
     }
 
-    const response = await api.post('/fcm/subscribe', { token });
+    const response = await api.post('/api/v1/fcm/subscribe', { token });
     return response.data;
   } catch (error) {
     console.error('Error subscribing to push notifications:', error);

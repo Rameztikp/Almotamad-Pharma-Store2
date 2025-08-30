@@ -560,6 +560,37 @@ class ApiService {
   }
 }
 
-// Export both the class and an instance
-export { ApiService };
+// API Request helper function
+const apiRequest = async (url, options = {}) => {
+  const api = new ApiService();
+  const method = (options.method || 'GET').toUpperCase();
+  const endpoint = url.startsWith('/') ? url.replace(/^\/api\/v1\//, '') : url;
+  
+  // Convert fetch-style options to apiService format
+  const data = options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined;
+  const isFormData = data instanceof FormData;
+  
+  try {
+    switch (method) {
+      case 'GET':
+        return await api.get(endpoint, data);
+      case 'POST':
+        return await api.post(endpoint, data, isFormData);
+      case 'PUT':
+        return await api.put(endpoint, data, isFormData);
+      case 'PATCH':
+        return await api.patch(endpoint, data, isFormData);
+      case 'DELETE':
+        return await api.delete(endpoint);
+      default:
+        throw new Error(`Unsupported HTTP method: ${method}`);
+    }
+  } catch (error) {
+    console.error('API request failed:', error);
+    throw error;
+  }
+};
+
+// Export both the class, instance, and helper function
+export { ApiService, apiRequest };
 export default new ApiService();

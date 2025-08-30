@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"pharmacy-backend/config"
@@ -70,8 +71,14 @@ func main() {
 	r := gin.Default()
 
 	// CORS configuration for all routes
+	corsOrigins := os.Getenv("CORS_ALLOW_ORIGINS")
+	if corsOrigins == "" {
+		corsOrigins = "http://localhost:5173"
+	}
+	origins := strings.Split(corsOrigins, ",")
+	
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "Content-Length", "X-Requested-With", "X-CSRF-Token"},
 		ExposeHeaders:    []string{"Content-Length"},

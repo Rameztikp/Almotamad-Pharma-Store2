@@ -1,0 +1,28 @@
+# ملف إعدادات الإنتاج للواجهة الأمامية
+# انسخ هذا المحتوى إلى ملف .env.production
+
+# API Configuration - Production
+VITE_API_BASE_URL=https://your-backend-domain.com/api/v1
+VITE_FILES_BASE_URL=https://your-backend-domain.com
+VITE_API_TIMEOUT=30000
+
+# CORS Configuration
+VITE_CORS_ORIGIN=https://your-frontend-domain.com
+VITE_CORS_CREDENTIALS=true
+
+# Production Mode
+VITE_APP_ENV=production
+VITE_DEBUG=false
+
+# Firebase Configuration (نفس القيم الموجودة)
+VITE_FIREBASE_API_KEY=AIzaSyAf4FUHcErictwyMdOMFt_HWxs5hlWpAKw
+VITE_FIREBASE_AUTH_DOMAIN=almatamed-11a07.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=almatamed-11a07
+VITE_FIREBASE_STORAGE_BUCKET=almatamed-11a07.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=418460842186
+VITE_FIREBASE_APP_ID=1:418460842186:web:66c0100d2465c851719c33
+VITE_FIREBASE_MEASUREMENT_ID=G-X20RGVZ8W2
+VITE_FIREBASE_VAPID_KEY=BIlyGPDzBdS2MpzXL3uR2cT7D4OJCsG_EKdyCgm_BYT5Us0cuqUWQkgfkDtlELWE3TWyFvozUETgCCfx7R7a5QU
+
+# Google Maps API (نفس القيمة)
+VITE_GOOGLE_MAPS_API_KEY=AIzaSyD7Mmh9ImGHNutKE4GarS6TDuUy_eSwEZo
