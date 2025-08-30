@@ -22,10 +22,12 @@ import (
 )
 
 func main() {
-	// تحميل متغيرات البيئة
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("تحذير: لم يتم العثور على ملف .env أو حدث خطأ في تحميله")
+	// تحميل متغيرات البيئة (فقط في التطوير المحلي)
+	if os.Getenv("GIN_MODE") != "release" {
+		err := godotenv.Load()
+		if err != nil {
+			log.Println("تحذير: لم يتم العثور على ملف .env أو حدث خطأ في تحميله")
+		}
 	}
 
 	// 🛡️ تهيئة مسجل الأحداث الأمنية
@@ -33,8 +35,10 @@ func main() {
 		log.Printf("تحذير: فشل في تهيئة مسجل الأحداث الأمنية: %v", err)
 	}
 
-	// طباعة كلمة السر للتأكد
-	log.Println("DB_PASSWORD من ملف .env =", os.Getenv("DB_PASSWORD"))
+	// طباعة متغيرات قاعدة البيانات للتأكد
+	log.Println("PGPASSWORD =", os.Getenv("PGPASSWORD"))
+	log.Println("PGHOST =", os.Getenv("PGHOST"))
+	log.Println("DATABASE_URL exists =", os.Getenv("DATABASE_URL") != "")
 
 	// تهيئة قاعدة البيانات
 	config.ConnectDatabase()

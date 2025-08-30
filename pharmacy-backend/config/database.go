@@ -32,12 +32,12 @@ type DatabaseConfig struct {
 // GetDatabaseConfig الحصول على إعدادات قاعدة البيانات من متغيرات البيئة
 func GetDatabaseConfig() *DatabaseConfig {
 	return &DatabaseConfig{
-		Host:     getEnv("DB_HOST", "localhost"),
-		Port:     getEnv("DB_PORT", "5432"),
-		User:     getEnv("DB_USER", "postgres"),
-		Password: getEnv("DB_PASSWORD", "password"),
-		DBName:   getEnv("DB_NAME", "pharmacy_db"),
-		SSLMode:  getEnv("DB_SSLMODE", "disable"),
+		Host:     getEnv("PGHOST", "localhost"),
+		Port:     getEnv("PGPORT", "5432"),
+		User:     getEnv("PGUSER", "postgres"),
+		Password: getEnv("PGPASSWORD", "password"),
+		DBName:   getEnv("PGDATABASE", "pharmacy_db"),
+		SSLMode:  getEnv("DB_SSLMODE", "require"),
 	}
 }
 
