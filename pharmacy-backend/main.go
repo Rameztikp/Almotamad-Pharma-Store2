@@ -339,16 +339,90 @@ func main() {
 			adminGroup.GET("/wholesale-customers", handlers.GetWholesaleCustomers)
 		}
 
-		// Coupons
-		api.POST("/coupons/validate", handlers.ValidateCoupon)
-
 		// Banner Routes
 		routes.RegisterBannerRoutes(api, bannerHandler)
+
+		// Temporary setup endpoint - remove after use
+		api.GET("/setup-admin", func(c *gin.Context) {
+			db := config.GetDB()
+			
+			// Check if admin already exists
+			var existingUser models.User
+			if err := db.Where("email = ?", "admin@almotamad.com").First(&existingUser).Error; err == nil {
+				c.JSON(200, gin.H{"message": "Admin user already exists", "email": existingUser.Email})
+				return
+			}
+			
+			// Create admin user
+			hashedPassword, _ := utils.HashPassword("admin123")
+			adminUser := models.User{
+				Email:         "admin@almotamad.com",
+				PasswordHash:  hashedPassword,
+				FullName:      "مدير النظام",
+				Phone:         "+966501234567",
+				AccountType:   "retail",
+				Role:          "admin",
+				IsActive:      true,
+				EmailVerified: true,
+				PhoneVerified: true,
+			}
+			
+			if err := db.Create(&adminUser).Error; err != nil {
+				c.JSON(500, gin.H{"error": "Failed to create admin user", "details": err.Error()})
+				return
+			}
+			
+			c.JSON(201, gin.H{
+				"message": "Admin user created successfully",
+				"email": "admin@almotamad.com",
+				"password": "admin123",
+			})
+		})
+
+		// Alternative endpoint
+		api.POST("/setup-admin", func(c *gin.Context) {
+			db := config.GetDB()
+			
+			// Check if admin already exists
+			var existingUser models.User
+			if err := db.Where("email = ?", "admin@almotamad.com").First(&existingUser).Error; err == nil {
+				c.JSON(200, gin.H{"message": "Admin user already exists", "email": existingUser.Email})
+				return
+			}
+			
+			// Create admin user
+			hashedPassword, _ := utils.HashPassword("admin123")
+			adminUser := models.User{
+				Email:         "admin@almotamad.com",
+				PasswordHash:  hashedPassword,
+				FullName:      "مدير النظام",
+				Phone:         "+966501234567",
+				AccountType:   "retail",
+				Role:          "admin",
+				IsActive:      true,
+				EmailVerified: true,
+				PhoneVerified: true,
+			}
+			
+			if err := db.Create(&adminUser).Error; err != nil {
+				c.JSON(500, gin.H{"error": "Failed to create admin user", "details": err.Error()})
+				return
+			}
+			
+			c.JSON(201, gin.H{
+				"message": "Admin user created successfully",
+				"email": "admin@almotamad.com",
+				"password": "admin123",
+			})
+		})
 	}
 
 	// تشغيل الخادم
-	port := getEnv("PORT", "8080")
-	log.Printf("✅ Server running on http://localhost:%s", port)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default for development only
+	}
+	log.Printf("✅ Server running on port %s", port)
 	log.Fatal(r.Run(":" + port))
 }
 

@@ -12,8 +12,8 @@ DB_SSLMODE=require
 PORT=8080
 GIN_MODE=release
 
-# CORS Configuration - عدّل هذه القيم للنطاقات الجديدة
-CORS_ALLOW_ORIGINS=https://your-frontend-domain.com,https://www.your-frontend-domain.com
+# CORS Configuration - Updated with actual Netlify domain
+CORS_ALLOW_ORIGINS=https://astounding-taiyaki-94eb0e.netlify.app
 CORS_ALLOW_CREDENTIALS=true
 CORS_ALLOW_METHODS=GET,HEAD,PUT,PATCH,POST,DELETE
 CORS_ALLOW_HEADERS=Content-Type,Authorization
