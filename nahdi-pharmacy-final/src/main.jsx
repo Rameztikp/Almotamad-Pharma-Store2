@@ -1,9 +1,11 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import FullyInteractiveApp from './FullyInteractiveApp.jsx' //
-import './App.css'
-createRoot(document.getElementById('root')).render(
-<StrictMode>
-<FullyInteractiveApp />
-</StrictMode>,
-)
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import FullyInteractiveApp from './FullyInteractiveApp';
+import './App.css';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <FullyInteractiveApp />
+  </React.StrictMode>
+);

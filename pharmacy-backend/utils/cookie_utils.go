@@ -3,6 +3,7 @@ package utils
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,10 +18,20 @@ import (
 // في بيئة الإنتاج أو عند تعيين FRONTEND_ORIGIN، يستخدم SameSite=None و Secure=true
 // في بيئة التطوير، يستخدم SameSite=Lax و Secure=false
 func CookieSecurity() (sameSite http.SameSite, secure bool) {
-    // في بيئة الإنتاج أو عند وجود FRONTEND_ORIGIN، استخدم SameSite=None و Secure=true
-    if os.Getenv("GIN_MODE") == gin.ReleaseMode || os.Getenv("FRONTEND_ORIGIN") != "" {
-        return http.SameSiteNoneMode, true
+    // التحقق من وجود HTTPS في الاستضافة
+    isProduction := os.Getenv("GIN_MODE") == gin.ReleaseMode
+    frontendOrigin := os.Getenv("FRONTEND_ORIGIN")
+    
+    // إذا كانت بيئة الإنتاج وتوجد FRONTEND_ORIGIN
+    if isProduction && frontendOrigin != "" {
+        // التحقق من أن FRONTEND_ORIGIN يستخدم HTTPS
+        if strings.HasPrefix(frontendOrigin, "https://") {
+            return http.SameSiteNoneMode, true
+        }
+        // إذا لم يكن HTTPS، استخدم Lax للأمان
+        return http.SameSiteLaxMode, false
     }
+    
     // إعدادات التطوير
     return http.SameSiteLaxMode, false
 }
@@ -29,6 +40,12 @@ func CookieSecurity() (sameSite http.SameSite, secure bool) {
 func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bool) {
 	sameSite, secure := CookieSecurity()
 	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	
+	// في الاستضافة، إذا لم يكن COOKIE_DOMAIN مضبوط، استخدم فارغ
+	// هذا يجعل الكوكيز تعمل مع الدومين الحالي
+	if cookieDomain == "" && os.Getenv("GIN_MODE") == gin.ReleaseMode {
+		cookieDomain = ""
+	}
 	
 	prefix := "client_"
 	if isAdmin {
@@ -57,6 +74,18 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 		secure,
 		true, // httpOnly
 	)
+	
+	// إضافة كوكيز إضافية للتوافق مع الواجهة الأمامية
+	// هذه الكوكيز ليست HttpOnly لتمكين الواجهة الأمامية من قراءتها
+	c.SetCookie(
+		prefix+"auth_status",
+		"authenticated",
+		int((24 * time.Hour).Seconds()),
+		"/",
+		cookieDomain,
+		secure,
+		false, // ليس HttpOnly - يمكن للواجهة الأمامية قراءتها
+	)
 }
 
 // ClearAuthCookies removes all auth cookies
@@ -70,6 +99,8 @@ func ClearAuthCookies(c *gin.Context) {
 		"client_refresh_token",
 		"admin_access_token",
 		"admin_refresh_token",
+		"client_auth_status",
+		"admin_auth_status",
 	}
 
 	for _, name := range cookies {
@@ -81,7 +112,7 @@ func ClearAuthCookies(c *gin.Context) {
 			"/",
 			cookieDomain,
 			secure,
-			true, // httpOnly
+			strings.Contains(name, "auth_status") == false, // auth_status cookies are not httpOnly
 		)
 	}
 }

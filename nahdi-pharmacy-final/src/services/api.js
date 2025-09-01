@@ -172,53 +172,49 @@ class ApiService {
       headers.set("Content-Type", "application/json");
     }
 
-    // Add Authorization header if token is available
-    const adminToken = localStorage.getItem('admin_token') || localStorage.getItem('adminToken') || localStorage.getItem('admin_auth_token');
-    const clientToken = localStorage.getItem('client_auth_token');
-    
-    // Debug logging for token availability
-    console.log('🔍 Token Debug:', {
-      adminToken: adminToken ? `${adminToken.substring(0, 20)}...` : 'null',
-      clientToken: clientToken ? `${clientToken.substring(0, 20)}...` : 'null',
-      localStorage_keys: Object.keys(localStorage),
-      usingCookies: 'HttpOnly cookies are used for authentication'
-    });
-    
-    // Determine which token to use based on current context
+    // Check for authentication status using non-HttpOnly cookies
     const isAdminPanel = window.location.pathname.startsWith('/admin');
-    let token = null;
+    const authStatusCookie = isAdminPanel ? 
+      this.getCookie('admin_auth_status') : 
+      this.getCookie('client_auth_status');
     
-    if (isAdminPanel) {
-      // In admin panel, only use admin token
-      token = adminToken;
-      if (!token) {
-        console.log('⚠️ No admin token found in admin panel context');
-      }
-    } else {
-      // In regular user area, only use client token
-      token = clientToken;
-      if (!token) {
-        console.log('⚠️ No client token found in user context');
-      }
-    }
-    
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-      console.log('✅ Authorization header added with Bearer token');
-    } else {
-      // For HttpOnly cookie authentication, we don't need to add Authorization header
-      // The browser will automatically include the cookies
-      console.log('ℹ️ Using HttpOnly cookies for authentication - no Authorization header needed');
-    }
+    // Debug logging for authentication status
+    console.log('🔍 Auth Status Debug:', {
+      isAdminPanel,
+      authStatusCookie,
+      usingHttpOnlyCookies: 'Authentication tokens are in HttpOnly cookies'
+    });
+
+    // For HttpOnly cookie authentication, we don't add Authorization header
+    // The browser automatically includes the cookies
+    console.log('ℹ️ Using HttpOnly cookies for authentication - no Authorization header needed');
 
     // Log all headers being sent
     const headersObj = {};
     headers.forEach((value, key) => {
-      headersObj[key] = key === 'Authorization' ? `Bearer ${value.substring(7, 27)}...` : value;
+      headersObj[key] = value;
     });
     console.log('📤 Request headers:', headersObj);
 
     return headers;
+  }
+
+  // Helper method to read cookies
+  getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  }
+
+  // Check if user is authenticated by checking auth status cookie
+  isAuthenticated() {
+    const isAdminPanel = window.location.pathname.startsWith('/admin');
+    const authStatusCookie = isAdminPanel ? 
+      this.getCookie('admin_auth_status') : 
+      this.getCookie('client_auth_status');
+    
+    return authStatusCookie === 'authenticated';
   }
 
   // Handle API responses - إصلاح شامل
@@ -240,26 +236,31 @@ class ApiService {
       console.error("❌ 401 Unauthorized - Invalid or expired token");
       console.groupEnd();
       
-      // Check if this is a token refresh request to prevent infinite loops
-      if (url.includes('/auth/refresh')) {
-        console.error('⚠️ Token refresh failed - forcing logout');
-        // Clear all auth data and redirect to login
-        this.clearAuth();
-        window.location.href = '/login?session=expired';
-        throw new Error('انتهت جلستك. يرجى تسجيل الدخول مرة أخرى');
-      }
+      // تجنب إعادة التوجيه المتكرر إذا كنا بالفعل في صفحة تسجيل الدخول
+      const isLoginPage = window.location.pathname.includes('/login') || 
+                         window.location.pathname.includes('/admin/login');
       
-      // مسح بيانات المصادقة بناءً على نوع الصفحة
-      const isAdminPanel = window.location.pathname.startsWith('/admin');
-      
-      if (isAdminPanel) {
-        this.clearAdminAuth();
-        // إعادة التوجيه إلى صفحة تسجيل الدخول للمسؤول
-        window.location.href = '/admin/login?session=expired';
-      } else {
-        this.clearClientAuth();
-        // إعادة التوجيه إلى صفحة تسجيل الدخول للمستخدم العادي
-        window.location.href = '/login?session=expired';
+      if (!isLoginPage) {
+        // Check if this is a token refresh request to prevent infinite loops
+        if (url.includes('/auth/refresh')) {
+          console.error('⚠️ Token refresh failed - forcing logout');
+          // Clear all auth data and redirect to login
+          this.clearAuth();
+          window.location.href = '/login?session=expired';
+        } else {
+          // مسح بيانات المصادقة بناءً على نوع الصفحة
+          const isAdminPanel = window.location.pathname.startsWith('/admin');
+          
+          if (isAdminPanel) {
+            this.clearAdminAuth();
+            // إعادة التوجيه إلى صفحة تسجيل الدخول للمسؤول
+            window.location.href = '/admin/login?session=expired';
+          } else {
+            this.clearClientAuth();
+            // إعادة التوجيه إلى صفحة تسجيل الدخول للمستخدم العادي
+            window.location.href = '/login?session=expired';
+          }
+        }
       }
       
       throw new Error("انتهت جلستك. يرجى تسجيل الدخول مرة أخرى");
