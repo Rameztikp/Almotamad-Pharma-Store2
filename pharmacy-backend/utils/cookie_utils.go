@@ -38,8 +38,9 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 	
 	// في الاستضافة، إذا لم يكن COOKIE_DOMAIN مضبوط، استخدم فارغ
 	// هذا يجعل الكوكيز تعمل مع الدومين الحالي
-	if cookieDomain == "" && os.Getenv("GIN_MODE") == gin.ReleaseMode {
-		cookieDomain = ""
+	// للـ Railway، استخدم فارغ بدلاً من .railway.app للتوافق مع cross-origin
+	if os.Getenv("GIN_MODE") == gin.ReleaseMode {
+		cookieDomain = "" // فارغ للسماح بـ cross-origin cookies
 	}
 	
 	prefix := "client_"
@@ -87,6 +88,11 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 func ClearAuthCookies(c *gin.Context) {
 	sameSite, secure := CookieSecurity()
 	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	
+	// للـ Railway، استخدم فارغ بدلاً من .railway.app للتوافق مع cross-origin
+	if os.Getenv("GIN_MODE") == gin.ReleaseMode {
+		cookieDomain = "" // فارغ للسماح بـ cross-origin cookies
+	}
 
 	// Clear all possible auth cookies
 	cookies := []string{

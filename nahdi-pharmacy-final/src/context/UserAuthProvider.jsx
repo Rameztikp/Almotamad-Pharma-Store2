@@ -86,10 +86,10 @@ export const UserAuthProvider = ({ children }) => {
     };
   }, [checkAuthStatus, isAuthenticated, user]);
 
-  const login = async (credentials) => {
+  const login = async (identifier, password) => {
     try {
       setLoading(true);
-      const response = await authService.login(credentials);
+      const response = await authService.login(identifier, password);
       
       // After successful login, check auth status to get user data
       await checkAuthStatus();
