@@ -303,7 +303,15 @@ const authService = {
           
           // فحص ما إذا كان المستخدم قد سجل خروجه - مع دعم HttpOnly cookies
           // إذا حصلنا على استجابة ناجحة من /auth/me فهذا يعني أن المصادقة صالحة (سواء كانت HttpOnly cookies أو localStorage tokens)
-          let hasValidAuth = true;
+          let hasValidAuth = false;
+
+          if (isAdmin) {
+            // For admin: check localStorage tokens
+            hasValidAuth = !!(localStorage.getItem('admin_token') || localStorage.getItem('adminToken') || localStorage.getItem('admin_auth_token'));
+          } else {
+            // For regular users: if we got successful response from /auth/me, HttpOnly cookies are valid
+            hasValidAuth = true;
+          }
             
           if (!hasValidAuth) {
             console.log('⚠️ لا توجد مصادقة صالحة - لن يتم حفظ بيانات المستخدم');

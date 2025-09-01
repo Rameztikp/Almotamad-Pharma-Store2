@@ -18,20 +18,11 @@ import (
 //
 // في بيئة الإنتاج أو عند تعيين CORS_ALLOW_ORIGINS مع HTTPS، يستخدم SameSite=None و Secure=true
 // في بيئة التطوير، يستخدم SameSite=Lax و Secure=false
-func CookieSecurity() (sameSite http.SameSite, secure bool) {
-    // التحقق من وجود HTTPS في الاستضافة
-    isProduction := os.Getenv("GIN_MODE") == gin.ReleaseMode
-    corsOrigins := os.Getenv("CORS_ALLOW_ORIGINS")
-    
-    // إذا كانت بيئة الإنتاج أو توجد CORS origins مع HTTPS
-    if isProduction || strings.Contains(corsOrigins, "https://") {
-        // استخدام SameSiteNoneMode للـ cross-origin requests مع HTTPS فقط
-        // التأكد من وجود HTTPS قبل استخدام SameSite=None
-        if strings.Contains(corsOrigins, "https://") {
-            return http.SameSiteNoneMode, true
-        }
-        // إذا كان production لكن بدون HTTPS، استخدم Lax
-        return http.SameSiteLaxMode, true
+func CookieSecurity() (http.SameSite, bool) {
+    // في الإنتاج، استخدم SameSite=None مع Secure=true للـ cross-origin cookies
+    if os.Getenv("GIN_MODE") == gin.ReleaseMode {
+        // في الإنتاج، استخدم دائماً SameSite=None مع Secure=true للـ cross-origin
+        return http.SameSiteNoneMode, true
     }
     
     // إعدادات التطوير
@@ -43,17 +34,12 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 	sameSite, secure := CookieSecurity()
 	cookieDomain := os.Getenv("COOKIE_DOMAIN")
 	
-	// في الاستضافة، إذا لم يكن COOKIE_DOMAIN مضبوط، استخدم فارغ
-	// هذا يجعل الكوكيز تعمل مع الدومين الحالي
-	// للـ Railway، نحتاج domain صحيح للـ cross-origin cookies
-	if os.Getenv("GIN_MODE") == gin.ReleaseMode && cookieDomain == "" {
-		// استخدم domain من الطلب الحالي إذا لم يكن محدد
-		host := c.Request.Host
-		if strings.Contains(host, ".railway.app") {
-			cookieDomain = ".railway.app"
-		} else {
-			cookieDomain = "" // فارغ للدومينات الأخرى
-		}
+	// للكوكيز عبر النطاقات المختلفة، نحتاج إعداد domain فارغ
+	// هذا يجعل المتصفح يقبل الكوكيز من النطاق الحالي
+	// ولا يحاول تطبيقها على نطاقات أخرى
+	if os.Getenv("GIN_MODE") == gin.ReleaseMode {
+		// في الإنتاج، استخدم domain فارغ للسماح للمتصفح بقبول الكوكيز
+		cookieDomain = ""
 	}
 	
 	prefix := "client_"
@@ -112,15 +98,9 @@ func ClearAuthCookies(c *gin.Context) {
 	sameSite, secure := CookieSecurity()
 	cookieDomain := os.Getenv("COOKIE_DOMAIN")
 	
-	// للـ Railway، نحتاج domain صحيح للـ cross-origin cookies
-	if os.Getenv("GIN_MODE") == gin.ReleaseMode && cookieDomain == "" {
-		// استخدم domain من الطلب الحالي إذا لم يكن محدد
-		host := c.Request.Host
-		if strings.Contains(host, ".railway.app") {
-			cookieDomain = ".railway.app"
-		} else {
-			cookieDomain = "" // فارغ للدومينات الأخرى
-		}
+	// في الإنتاج، استخدم domain فارغ للسماح للمتصفح بقبول الكوكيز
+	if os.Getenv("GIN_MODE") == gin.ReleaseMode {
+		cookieDomain = ""
 	}
 
 	// Clear all possible auth cookies
