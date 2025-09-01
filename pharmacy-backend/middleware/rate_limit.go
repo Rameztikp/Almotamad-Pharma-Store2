@@ -69,13 +69,10 @@ func (rl *RateLimiter) getVisitor(ip string) *Visitor {
 		go func() {
 			ticker := time.NewTicker(rl.rate)
 			defer ticker.Stop()
-			for {
+			for range ticker.C {
 				select {
-				case <-ticker.C:
-					select {
-					case v.limiter <- struct{}{}:
-					default:
-					}
+				case v.limiter <- struct{}{}:
+				default:
 				}
 			}
 		}()

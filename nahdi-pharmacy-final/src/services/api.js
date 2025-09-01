@@ -228,45 +228,41 @@ class ApiService {
     console.log("URL:", url);
     console.log("Status:", response.status, response.statusText);
     
-    // معالجة خطأ 401 (غير مصرح) - محاولة واحدة فقط لتجديد الجلسة عبر الكوكيز
-    if (response.status === 401 && !options._retry) {
-      console.log("🔄 محاولة تحديث التوكن بعد خطأ 401...");
+    // Log response headers for debugging
+    const responseHeaders = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = key.toLowerCase().includes('token') ? '***REDACTED***' : value;
+    });
+    console.log('Response Headers:', responseHeaders);
+    
+    // Handle unauthorized (401) - يتم معالجته بشكل منفصل لأنه يحتاج إلى تحديث الصفحة
+    if (response.status === 401) {
+      console.error("❌ 401 Unauthorized - Invalid or expired token");
+      console.groupEnd();
       
-      try {
-        // محاولة تحديث الجلسة
-        const refreshed = await this.refreshToken();
-        if (refreshed) {
-          console.log("🔄 إعادة المحاولة بعد التحديث...");
-          console.groupEnd(); // إنهاء مجموعة السجلات
-          
-          // إعادة المحاولة مع التوكن الجديد
-          const retryOptions = {
-            ...options,
-            _retry: true, // منع التكرار اللانهائي
-            headers: { ...options.headers },
-          };
-          
-          // إعادة إرسال الطلب الأصلي
-          if (options.method && options.method.toLowerCase() === 'get') {
-            // Extract endpoint from full URL properly - keep leading slash
-            const endpoint = url.replace(this.baseURL, '') || url;
-            return this.get(endpoint, options.params);
-          } else {
-            const method = options.method || 'GET';
-            // Extract endpoint from full URL properly - keep leading slash
-            const endpoint = url.replace(this.baseURL, '') || url;
-            return this.request(method, endpoint, options.data, options.isFormData, 0, retryOptions);
-          }
-        }
-      } catch (refreshError) {
-        console.error("❌ فشل تحديث التوكن:", refreshError);
-        
-        console.groupEnd();
-        
-        const error = new Error("انتهت جلستك، يرجى تسجيل الدخول مرة أخرى");
-        error.response = response;
-        throw error;
+      // Check if this is a token refresh request to prevent infinite loops
+      if (url.includes('/auth/refresh')) {
+        console.error('⚠️ Token refresh failed - forcing logout');
+        // Clear all auth data and redirect to login
+        this.clearAuth();
+        window.location.href = '/login?session=expired';
+        throw new Error('انتهت جلستك. يرجى تسجيل الدخول مرة أخرى');
       }
+      
+      // مسح بيانات المصادقة بناءً على نوع الصفحة
+      const isAdminPanel = window.location.pathname.startsWith('/admin');
+      
+      if (isAdminPanel) {
+        this.clearAdminAuth();
+        // إعادة التوجيه إلى صفحة تسجيل الدخول للمسؤول
+        window.location.href = '/admin/login?session=expired';
+      } else {
+        this.clearClientAuth();
+        // إعادة التوجيه إلى صفحة تسجيل الدخول للمستخدم العادي
+        window.location.href = '/login?session=expired';
+      }
+      
+      throw new Error("انتهت جلستك. يرجى تسجيل الدخول مرة أخرى");
     }
 
     // Handle no content
@@ -308,6 +304,12 @@ class ApiService {
     if (response.status >= 500) {
       console.error("Server error:", response.statusText);
       console.groupEnd();
+      
+      // Check for CORS errors
+      if (response.status === 0) {
+        throw new Error("تعذر الاتصال بالخادم. يرجى التحقق من اتصالك بالإنترنت وتأكد من أن الخادم يعمل");
+      }
+      
       throw new Error("حدث خطأ في الخادم. يرجى المحاولة مرة أخرى لاحقاً");
     }
 
@@ -402,34 +404,40 @@ class ApiService {
   }
 
   // Generic request method with timeout and retry logic
-  async request(
-    method,
-    endpoint,
-    data = null,
-    isFormData = false,
-    retries = 2
-  ) {
-    // No preflight token refresh; cookies are handled by the browser
-
-    // Set default config
-    const config = {
-      method,
-      headers: this.buildHeaders(isFormData),
-      credentials: "include", // Important for cookies/sessions
-    };
-
-    if (data) {
-      if (data instanceof FormData) {
-        // Let the browser set the Content-Type header for FormData
-        delete config.headers['Content-Type'];
-        config.body = data;
-      } else {
-        config.body = JSON.stringify(data);
-      }
+  async request(method, endpoint, data = null, isFormData = false, retries = 3) {
+    // Build URL with query params
+    let url = `${this.baseURL}${endpoint}`;
+    
+    // For GET requests, add data as query parameters
+    if (method === 'GET' && data) {
+      const params = new URLSearchParams();
+      Object.entries(data).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          if (Array.isArray(value)) {
+            value.forEach(v => params.append(key, v));
+          } else {
+            params.append(key, value);
+          }
+        }
+      });
+      url += (url.includes('?') ? '&' : '?') + params.toString();
     }
 
-    // Build URL with query params if GET request
-    let url = `${this.baseURL}${endpoint}`;
+    // Build request options
+    const options = {
+      method,
+      headers: this.buildHeaders(isFormData),
+      credentials: 'include', // Always include credentials (cookies)
+      mode: 'cors', // Ensure CORS mode is enabled
+      cache: 'no-cache', // Disable cache for authenticated requests
+      redirect: 'follow',
+      referrerPolicy: 'no-referrer-when-downgrade',
+    };
+
+    // Add body for non-GET requests
+    if (data && method !== 'GET') {
+      options.body = isFormData ? data : JSON.stringify(data);
+    }
 
     // Add timestamp only if there are no existing query parameters
     if (method === "GET" && !url.includes("?")) {
@@ -440,10 +448,13 @@ class ApiService {
 
     console.group(`🌐 API Request: ${method} ${url}`);
     if (data && !isFormData) console.log("Request Data:", data);
-    console.log("Request Headers:", config.headers);
+    console.log("Request Options:", {
+      ...options,
+      headers: Object.fromEntries(options.headers.entries())
+    });
 
     try {
-      const response = await fetch(url, config);
+      const response = await fetch(url, options);
       const result = await this.handleResponse(response, url);
       console.groupEnd();
       return result;

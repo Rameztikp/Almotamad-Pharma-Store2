@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"net/http"
+	"os"
 	"pharmacy-backend/config"
 	"pharmacy-backend/models"
 	"pharmacy-backend/utils"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,116 +20,60 @@ type AdminLoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// AdminLogin تسجيل دخول المشرف
+// AdminLogin handles admin authentication
 func AdminLogin(c *gin.Context) {
 	var req AdminLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.RespondWithError(c, http.StatusBadRequest, "بيانات غير صالحة")
+		utils.BadRequestResponse(c, "Invalid request data", err.Error())
 		return
 	}
 
-	// البحث عن المستخدم بالبريد الإلكتروني
+	// Find user by email
 	var user models.User
-	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "البريد الإلكتروني أو كلمة المرور غير صحيحة"})
+	if err := config.DB.Where("email = ?", strings.ToLower(strings.TrimSpace(req.Email))).First(&user).Error; err != nil {
+		utils.UnauthorizedResponse(c, "Invalid email or password")
 		return
 	}
 
-	// التحقق من كلمة المرور
-	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "البريد الإلكتروني أو كلمة المرور غير صحيحة"})
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		utils.UnauthorizedResponse(c, "Invalid email or password")
 		return
 	}
 
-	// التحقق من صلاحيات المشرف
+	// Check admin role
 	if user.Role != models.RoleAdmin && user.Role != models.RoleSuperAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "غير مصرح بالوصول"})
+		utils.ForbiddenResponse(c, "Access denied")
 		return
 	}
 
-	// إنشاء access token و refresh token
+	// Generate tokens
 	accessToken, refreshToken, err := utils.GenerateTokens(user.ID, user.Email, string(user.Role))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "خطأ في إنشاء جلسة المستخدم"})
+		utils.InternalServerErrorResponse(c, "Failed to generate tokens", err.Error())
 		return
 	}
 
-	// تحديث وقت آخر تسجيل دخول
+	// Update last login time
 	now := time.Now()
 	user.LastLoginAt = &now
 	if err := config.DB.Save(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "خطأ في تحديث بيانات المستخدم"})
+		utils.InternalServerErrorResponse(c, "Failed to update user data", err.Error())
 		return
 	}
 
-	// إخفاء الحقول الحساسة
+	// Clear sensitive data
 	user.PasswordHash = ""
 
-	// ضبط التوكنات في ملفات تعريف الارتباط HttpOnly للمشرف
-	// نستخدم نفس إعدادات CORS للتحقق من النطاقات المسموح بها
-	sameSiteMode, isSecure := utils.CookieSecurity()
+	// Set secure HTTP-only cookies for admin
+	utils.SetAuthCookies(c, accessToken, refreshToken, true)
 
-	// أولاً: احذف أي كوكيز قديمة واسعة النطاق (Path="/") كي لا تُرسل للمتجر
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_access_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: sameSiteMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
+	// Return the tokens in the response (useful for API clients)
+	utils.SuccessResponse(c, "Login successful", gin.H{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"user":         user,
 	})
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_refresh_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: sameSiteMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
-
-	// ثانياً: ضع كوكيز المسؤول بنطاق مسار api/v1 لتغطية جميع المسارات
-	sameSiteMode, secureFlag := utils.CookieSecurity()
-
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_access_token",
-		Value:    accessToken,
-		Path:     "/api/v1",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-	})
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_refresh_token",
-		Value:    refreshToken,
-		Path:     "/api/v1",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-		MaxAge:   30 * 24 * 60 * 60,  // 30 يوم
-		Expires:  time.Now().Add(30 * 24 * time.Hour),
-	})
-
-	// إرجاع الاستجابة مع التوكن للاستخدام في localStorage
-	response := gin.H{
-		"success": true,
-		"user":    user,
-		"token":   accessToken,
-	}
-
-	// Add cookie settings for debugging in development
-	if gin.Mode() != gin.ReleaseMode {
-		response["cookieSettings"] = gin.H{
-			"sameSite": sameSiteMode,
-			"secure":   isSecure,
-		}
-	}
-
-	c.JSON(http.StatusOK, response)
 }
 
 // AdminAuthRequired middleware للتحقق من صلاحيات المشرف
@@ -221,108 +167,77 @@ func GetAdminProfile(c *gin.Context) {
 
 // AdminLogout handles admin logout
 func AdminLogout(c *gin.Context) {
-	sameSiteMode, secureFlag := cookieSecurity()
+	// Clear all auth cookies
+	utils.ClearAuthCookies(c)
 
-	// Delete admin cookies from /api/v1 path
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_access_token",
-		Path:     "/api/v1",
-		Value:    "",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
+	// Additional cleanup for admin-specific paths
+	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	_, secure := utils.CookieSecurity()
+	
+	// Clear admin cookies from all possible paths
+	paths := []string{"/api/v1", "/api/v1/admin"}
+	for _, path := range paths {
+		c.SetCookie("admin_access_token", "", -1, path, cookieDomain, secure, true)
+		c.SetCookie("admin_refresh_token", "", -1, path, cookieDomain, secure, true)
+	}
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_refresh_token",
-		Path:     "/api/v1",
-		Value:    "",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
-
-	// Also delete any old cookies that might exist on root path
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_access_token",
-		Path:     "/",
-		Value:    "",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "تم تسجيل الخروج بنجاح",
-	})
+	utils.SuccessResponse(c, "تم تسجيل الخروج بنجاح", nil)
 }
 
 // AdminRefreshToken handles admin token refresh
 func AdminRefreshToken(c *gin.Context) {
-	// Get refresh token from cookie
-	refreshToken, err := c.Cookie("admin_refresh_token")
-	if err != nil || refreshToken == "" {
-		utils.UnauthorizedResponse(c, "جلسة منتهية الصلاحية")
+	// Get refresh token from cookie or request body
+	token, found := utils.GetRefreshTokenFromRequest(c)
+	if !found {
+		utils.UnauthorizedResponse(c, "Refresh token is required")
 		return
 	}
 
-	// Verify refresh token
-	claims, err := utils.VerifyJWT(refreshToken)
+	// Verify the refresh token
+	claims, err := utils.VerifyJWT(token)
 	if err != nil {
-		utils.UnauthorizedResponse(c, "جلسة غير صالحة")
+		utils.UnauthorizedResponse(c, "Invalid refresh token")
 		return
 	}
 
 	// Check if token is a refresh token
 	tokenType, _ := claims["type"].(string)
 	if tokenType != "refresh" {
-		utils.UnauthorizedResponse(c, "نوع التوكن غير صالح")
+		utils.UnauthorizedResponse(c, "Invalid token type")
+		return
+	}
+
+	// Get user ID from claims
+	userID, err := uuid.Parse(claims["user_id"].(string))
+	if err != nil {
+		utils.UnauthorizedResponse(c, "Invalid user in token")
+		return
+	}
+
+	// Check if user exists and is active
+	var user models.User
+	if err := config.DB.Where("id = ? AND is_active = ?", userID, true).First(&user).Error; err != nil {
+		utils.UnauthorizedResponse(c, "User not found or inactive")
 		return
 	}
 
 	// Generate new tokens
-	userID, _ := uuid.Parse(claims["user_id"].(string))
-	email, _ := claims["email"].(string)
-	role, _ := claims["role"].(string)
-
-	accessToken, newRefreshToken, err := utils.GenerateTokens(userID, email, role)
+	accessToken, refreshToken, err := utils.GenerateTokens(user.ID, user.Email, string(user.Role))
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "فشل في إنشاء التوكنات", err.Error())
+		utils.InternalServerErrorResponse(c, "Failed to generate tokens", err.Error())
 		return
 	}
 
-	// Get security settings for cookies
-	sameSiteMode, secureFlag := utils.CookieSecurity()
+	// Clear sensitive data
+	user.PasswordHash = ""
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_access_token",
-		Value:    accessToken,
-		Path:     "/api/v1",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-	})
+	// Set secure HTTP-only cookies for admin
+	utils.SetAuthCookies(c, accessToken, refreshToken, true)
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "admin_refresh_token",
-		Value:    newRefreshToken,
-		Path:     "/api/v1",
-		HttpOnly: true,
-		Secure:   secureFlag,
-		SameSite: sameSiteMode,
-		MaxAge:   30 * 24 * 60 * 60,  // 30 يوم
-		Expires:  time.Now().Add(30 * 24 * time.Hour),
-	})
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":      true,
-		"access_token": accessToken,
+	// Return the tokens in the response (useful for API clients)
+	utils.SuccessResponse(c, "Token refreshed successfully", gin.H{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"user":         user,
 	})
 }

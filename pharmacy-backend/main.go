@@ -84,6 +84,10 @@ func main() {
 	// Function to check if origin is allowed
 	isAllowedOrigin := func(origin string) bool {
 		origin = strings.TrimSpace(origin)
+		// Allow all subdomains of railway.app for cookie domain
+		if strings.HasSuffix(origin, ".railway.app") {
+			return true
+		}
 		for _, allowed := range origins {
 			if origin == strings.TrimSpace(allowed) {
 				return true
@@ -94,10 +98,16 @@ func main() {
 
 	// CORS configuration
 	corsConfig := cors.Config{
-		AllowOrigins:     origins,
+		AllowOriginFunc: func(origin string) bool {
+			// Skip CORS for non-browser requests
+			if origin == "" {
+				return true
+			}
+			return isAllowedOrigin(origin)
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "Content-Length", "X-Requested-With", "X-CSRF-Token"},
-		ExposeHeaders:    []string{"Content-Length"},
+		ExposeHeaders:    []string{"Content-Length", "Set-Cookie"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}
@@ -108,15 +118,29 @@ func main() {
 	// Handle preflight requests
 	r.OPTIONS("/*any", func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
+		if origin == "" {
+			c.Status(204)
+			return
+		}
+
+		// Set CORS headers
 		if isAllowedOrigin(origin) {
 			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Vary", "Origin") // Important for caching
+		} else {
+			c.Header("Access-Control-Allow-Origin", "")
 		}
+		
+		c.Header("Vary", "Origin") // Important for caching
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, Content-Length, X-Requested-With, X-CSRF-Token")
+		c.Header("Access-Control-Expose-Headers", "Content-Length, Set-Cookie")
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "43200") // 12 hours
-		c.Status(204)
+		
+		// For preflight requests, respond with 204 No Content
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+		}
 	})
 
 	// Serve static files from uploads directory
