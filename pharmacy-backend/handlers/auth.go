@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -180,7 +181,9 @@ func Login(c *gin.Context) {
 	user.PasswordHash = ""
 
 	// Set secure HTTP-only cookies
+	log.Printf("🔐 Login successful for user %s, setting cookies...", user.Email)
 	utils.SetAuthCookies(c, accessToken, refreshToken, false)
+	log.Printf("✅ Cookies set, sending response...")
 
 	utils.SuccessResponse(c, "Login successful", gin.H{"user": user})
 }
