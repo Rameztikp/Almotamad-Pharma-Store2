@@ -61,29 +61,30 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 		prefix = "admin_"
 	}
 
-	// Set access token cookie (short-lived)
+	// Set access token cookie (HttpOnly)
 	c.SetSameSite(sameSite)
 	c.SetCookie(
 		prefix+"access_token",
 		accessToken,
-		int((24 * time.Hour).Seconds()), // 24 hours
+		int((24 * time.Hour).Seconds()),
 		"/",
 		cookieDomain,
 		secure,
-		true, // httpOnly
+		true, // HttpOnly
 	)
 
-	// Set refresh token cookie (long-lived)
+	// Set refresh token cookie (HttpOnly)
+	c.SetSameSite(sameSite)
 	c.SetCookie(
 		prefix+"refresh_token",
 		refreshToken,
-		int((30 * 24 * time.Hour).Seconds()), // 30 days
+		int((7 * 24 * time.Hour).Seconds()), // 7 days
 		"/",
 		cookieDomain,
 		secure,
-		true, // httpOnly
+		true, // HttpOnly
 	)
-	
+
 	// إضافة كوكيز إضافية للتوافق مع الواجهة الأمامية
 	// هذه الكوكيز ليست HttpOnly لتمكين الواجهة الأمامية من قراءتها
 	c.SetCookie(
