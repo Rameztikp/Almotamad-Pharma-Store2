@@ -24,6 +24,7 @@ func CookieSecurity() (sameSite http.SameSite, secure bool) {
     
     // إذا كانت بيئة الإنتاج أو توجد CORS origins مع HTTPS
     if isProduction || strings.Contains(corsOrigins, "https://") {
+        // استخدام SameSiteNoneMode للـ cross-origin requests
         return http.SameSiteNoneMode, true
     }
     

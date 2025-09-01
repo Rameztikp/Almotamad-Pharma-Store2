@@ -18,7 +18,9 @@ export const UserAuthProvider = ({ children }) => {
   }, []);
 
   const isAuthenticated = useCallback(() => {
-    return getCookie('client_auth_status') === 'authenticated';
+    const authCookie = getCookie('client_auth_status');
+    console.log('🔍 Auth Cookie Check:', { authCookie, allCookies: document.cookie });
+    return authCookie === 'authenticated';
   }, [getCookie]);
 
   // Initialize auth state by checking cookies and fetching profile
