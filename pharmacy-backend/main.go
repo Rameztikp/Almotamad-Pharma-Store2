@@ -77,7 +77,8 @@ func main() {
 	// CORS configuration for all routes
 	corsOrigins := os.Getenv("CORS_ALLOW_ORIGINS")
 	if corsOrigins == "" {
-		corsOrigins = "http://localhost:5173"
+		// Default origins for development and production
+		corsOrigins = "http://localhost:5173,https://astounding-taiyaki-94eb0e.netlify.app"
 	}
 	origins := strings.Split(corsOrigins, ",")
 
@@ -157,7 +158,7 @@ func main() {
 	
 	// FCM routes - moved to /api/v1/fcm to match frontend expectations
 	fcmRoutes := api.Group("/fcm")
-	fcmRoutes.Use(middleware.JWTAuth())
+	fcmRoutes.Use(middleware.AuthMiddleware())
 	{
 		// Register FCM token
 		fcmRoutes.POST("/subscribe", fcmHandler.SubscribeUserToFCM)
@@ -178,16 +179,16 @@ func main() {
 			auth.POST("/register", middleware.LoginRateLimit(), handlers.Register)
 			auth.POST("/login", middleware.LoginRateLimit(), handlers.Login)
 			auth.POST("/refresh-token", handlers.RefreshToken)
-			auth.GET("/profile", middleware.JWTAuth(), handlers.GetProfile)
-			auth.GET("/me", middleware.JWTAuth(), handlers.GetProfile) // إضافة مسار /me
-			auth.PUT("/profile", middleware.JWTAuth(), handlers.UpdateProfile)
-			auth.PUT("/change-password", middleware.JWTAuth(), handlers.ChangePassword)
-			auth.POST("/logout", middleware.JWTAuth(), handlers.Logout)
+			auth.GET("/profile", middleware.AuthMiddleware(), handlers.GetProfile)
+			auth.GET("/me", middleware.AuthMiddleware(), handlers.GetProfile) // إضافة مسار /me
+			auth.PUT("/profile", middleware.AuthMiddleware(), handlers.UpdateProfile)
+			auth.PUT("/change-password", middleware.AuthMiddleware(), handlers.ChangePassword)
+			auth.POST("/logout", middleware.AuthMiddleware(), handlers.Logout)
 
 			// Admin authentication endpoints
 			// POST /api/v1/auth/admin/login
 			auth.POST("/admin/login", middleware.LoginRateLimit(), handlers.AdminLogin)
-			auth.GET("/admin/profile", middleware.JWTAuth(), middleware.AdminOnly(), handlers.GetAdminProfile)
+			auth.GET("/admin/profile", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetAdminProfile)
 		}
 
 
@@ -196,9 +197,9 @@ func main() {
 		wholesale := api.Group("/wholesale")
 		{
 			// POST /api/v1/wholesale/requests - Submit a new wholesale upgrade request
-			wholesale.POST("/requests", middleware.JWTAuth(), handlers.UpgradeToWholesale)
+			wholesale.POST("/requests", middleware.AuthMiddleware(), handlers.UpgradeToWholesale)
 			// GET /api/v1/wholesale/requests - Get current user's wholesale request
-			wholesale.GET("/requests", middleware.JWTAuth(), handlers.GetUserWholesaleRequest)
+			wholesale.GET("/requests", middleware.AuthMiddleware(), handlers.GetUserWholesaleRequest)
 		}
 
 		// Public products routes
@@ -222,7 +223,7 @@ func main() {
 
 		// سلة التسوق
 		cart := api.Group("/cart")
-		cart.Use(middleware.JWTAuth())
+		cart.Use(middleware.AuthMiddleware())
 		{
 			cart.GET("/", handlers.GetCart)
 			cart.GET("", handlers.GetCart)
@@ -235,7 +236,7 @@ func main() {
 
 		// المفضلة
 		favorites := api.Group("/favorites")
-		favorites.Use(middleware.JWTAuth())
+		favorites.Use(middleware.AuthMiddleware())
 		{
 			favorites.GET("/", handlers.GetFavorites)
 			favorites.GET("", handlers.GetFavorites)
@@ -246,7 +247,7 @@ func main() {
 
 		// الطلبات
 		orders := api.Group("/orders")
-		orders.Use(middleware.JWTAuth())
+		orders.Use(middleware.AuthMiddleware())
 		{
 			orders.POST("/", handlers.CreateOrder)
 			orders.POST("", handlers.CreateOrder)
@@ -263,10 +264,10 @@ func main() {
 		notifications := api.Group("/notifications")
 		{
 			// SSE stream endpoint (protected with JWT)
-			notifications.GET("/stream", middleware.JWTAuth(), handlers.NotificationsStream)
+			notifications.GET("/stream", middleware.AuthMiddleware(), handlers.NotificationsStream)
 			
 			// REST API endpoints for stored notifications
-			notifications.Use(middleware.JWTAuth())
+			notifications.Use(middleware.AuthMiddleware())
 			notifications.GET("", handlers.GetUserNotifications)
 			notifications.PUT("/:id/read", handlers.MarkNotificationAsRead)
 			notifications.PUT("/read-all", handlers.MarkAllNotificationsAsRead)
@@ -283,7 +284,7 @@ func main() {
 				adminNotifications.GET("/stream", handlers.AdminNotificationsStream)
 				
 				// Protected admin notification endpoints
-				adminNotifications.Use(middleware.JWTAuth(), middleware.AdminOnly())
+				adminNotifications.Use(middleware.AuthMiddleware(), middleware.AdminMiddleware())
 				adminNotifications.GET("", handlers.GetAdminNotifications)
 				adminNotifications.GET("/unread-count", handlers.GetAdminUnreadCount)
 				adminNotifications.PUT("/:id/read", handlers.MarkNotificationAsRead)
@@ -292,7 +293,7 @@ func main() {
 			}
 			
 			// Apply middleware to other admin routes
-			adminGroup.Use(middleware.JWTAuth(), middleware.AdminOnly())
+			adminGroup.Use(middleware.AuthMiddleware(), middleware.AdminMiddleware())
 			// Product management routes
 			adminProducts := adminGroup.Group("/products")
 			{

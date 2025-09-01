@@ -53,10 +53,17 @@ const scopedKey = (base) => {
   return uid ? `${base}_${uid}` : `${base}_anon`;
 };
 
-const getClientToken = () =>
-  localStorage.getItem('client_auth_token') ||
-  localStorage.getItem('authToken') ||
-  localStorage.getItem('token');
+// Helper function to check authentication status using HttpOnly cookies
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+};
+
+const isAuthenticatedViaCookie = () => {
+  return getCookie('client_auth_status') === 'authenticated';
+};
 
 const getApiBase = () => {
   // In development, use the proxy path with /api/v1 prefix
@@ -136,7 +143,12 @@ const subscribe = (cb) => {
 
 const isAuthenticated = () => {
   try {
-    // Check for user session data in localStorage
+    // Primary check: HttpOnly cookie authentication status
+    if (isAuthenticatedViaCookie()) {
+      return true;
+    }
+    
+    // Fallback: Check for user session data in localStorage (for admin users)
     const userData = localStorage.getItem('client_user_data') || 
                     localStorage.getItem('adminData') || 
                     localStorage.getItem('userData');
@@ -167,9 +179,9 @@ const startSSE = () => {
     return;
   }
 
-  const token = getClientToken();
-  if (!token) {
-    console.log('SSE: No auth token available, waiting for login');
+  // Check authentication using HttpOnly cookies
+  if (!isAuthenticatedViaCookie()) {
+    console.log('SSE: User not authenticated, waiting for login');
     return;
   }
 
@@ -200,11 +212,11 @@ const startSSE = () => {
     const cleanBase = base.replace(/\/$/, '').replace(/\/api\/v1$/, '');
     const url = new URL('/api/v1/notifications/stream', cleanBase);
     try {
-      // Add token as query parameter for authentication
-      const sseUrl = `${SSE_ENDPOINT}?token=${encodeURIComponent(token)}`;
+      // Use HttpOnly cookies for authentication - no token in URL needed
+      const sseUrl = `${url.origin}${SSE_ENDPOINT}`;
       console.log(`SSE: Connecting to ${sseUrl}`);
 
-      // Create new EventSource with credentials
+      // Create new EventSource with credentials to send HttpOnly cookies
       const newEventSource = new EventSource(sseUrl, { 
         withCredentials: true 
       });
@@ -508,8 +520,7 @@ const initializeFCM = async () => {
       localStorage.setItem(FCM_TOKEN_KEY, currentToken);
 
       // Register token with backend if user is authenticated
-      const isAuth = await isAuthenticated();
-      if (isAuth) {
+      if (isAuthenticatedViaCookie()) {
         await registerFCMToken(currentToken);
       }
       
@@ -528,6 +539,12 @@ const initializeFCM = async () => {
 // Register FCM token with backend
 const registerFCMToken = async (token) => {
   try {
+    // Check authentication before registering token
+    if (!isAuthenticatedViaCookie()) {
+      console.warn('User not authenticated, cannot register FCM token');
+      return false;
+    }
+
     const deviceId = await getDeviceId();
     await apiRequest('/fcm/subscribe', {
       method: 'POST',
@@ -694,6 +711,71 @@ const handlePushNotification = (payload) => {
   }
 };
 
+// Initialize notifications for authenticated users
+const initializeForAuthenticatedUser = async () => {
+  try {
+    console.log('Initializing notifications for authenticated user');
+    
+    // Check if user is authenticated
+    if (!isAuthenticatedViaCookie()) {
+      console.log('User not authenticated, skipping notification initialization');
+      return false;
+    }
+
+    // Start SSE connection
+    startSSE();
+    
+    // Fetch existing notifications
+    await fetchNotifications();
+    
+    // Initialize FCM if available and user granted permission
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      try {
+        // Check if user already granted permission
+        if (Notification.permission === 'granted') {
+          await initializeFCM();
+        }
+      } catch (error) {
+        console.error('Error initializing FCM for authenticated user:', error);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error initializing notifications for authenticated user:', error);
+    return false;
+  }
+};
+
+// Clean up notifications on logout
+const cleanupOnLogout = async () => {
+  try {
+    console.log('Cleaning up notifications on logout');
+    
+    // Stop SSE connection
+    stopSSE();
+    
+    // Stop polling
+    stopOrderPolling();
+    
+    // Clear local notifications for current user
+    const userId = getCurrentUserId();
+    if (userId) {
+      localStorage.removeItem(scopedKey(STORAGE_BASE));
+      localStorage.removeItem(scopedKey(SNAPSHOT_BASE));
+      localStorage.removeItem(scopedKey(LAST_SEEN_BASE));
+    }
+    
+    // Delete FCM token
+    await notificationService.deleteFCMToken();
+    
+    return true;
+  } catch (error) {
+    console.error('Error cleaning up notifications on logout:', error);
+    return false;
+  }
+};
+
 const notificationService = {
   init,
   addNotification,
@@ -709,6 +791,8 @@ const notificationService = {
   handlePushNotification,
   getUnreadCount,
   getFCMToken: () => fcmToken,
+  initializeForAuthenticatedUser,
+  cleanupOnLogout,
   deleteFCMToken: async () => {
     if (fcmMessaging && fcmToken) {
       try {

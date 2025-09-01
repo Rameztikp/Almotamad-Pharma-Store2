@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { useUserAuth } from '../context/UserAuthContext';
+import { useUserAuth } from '../context/UserAuthProvider';
 import { toast } from 'react-hot-toast';
 
 const ProtectedRoute = ({ children, requiredRole }) => {

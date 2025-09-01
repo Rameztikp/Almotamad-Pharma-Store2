@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, message, Alert, Typography } from 'antd';
 import { BellOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
-import { useUserAuth } from '../context/UserAuthContext';
+import { useUserAuth } from '../context/UserAuthProvider';
 import usePushNotifications from '../hooks/usePushNotifications';
 import api from '../services/api';
 

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'react-hot-toast';
 import { authService } from '@/services/authService';
-import { useUserAuth } from '@/context/UserAuthContext';
+import { useUserAuth } from '@/context/UserAuthProvider';
 import { Eye, EyeOff, Mail, Lock, Phone, User, AlertCircle, LogIn, Calendar } from 'lucide-react';
 import { FcGoogle } from 'react-icons/fc';
 

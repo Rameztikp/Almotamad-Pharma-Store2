@@ -3,7 +3,7 @@
 const isDevelopment = import.meta.env.MODE === "development";
 const API_BASE_URL = isDevelopment
   ? "/api/v1"
-  : import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1";
+  : import.meta.env.VITE_API_BASE_URL || "https://almotamad-pharma-store2-production.up.railway.app/api/v1";
 const API_TIMEOUT = import.meta.env.VITE_API_TIMEOUT || 30000; // Increased timeout for development
 
 // URL for static assets like images
@@ -24,6 +24,8 @@ class ApiService {
     this.timeout = API_TIMEOUT;
     // Tokens are managed by HttpOnly cookies now
     this.token = null;
+    this._isRefreshing = false;
+    this._refreshPromise = null;
   }
 
   // Check if token is about to expire (less than 5 minutes remaining)
@@ -45,20 +47,33 @@ class ApiService {
   // Update token in memory and storage - محسّن
   setToken(_) { this.token = null; }
 
-  // Refresh token method - إصلاح شامل
+  // Refresh token method - إصلاح شامل مع منع الحلقات اللانهائية
   async refreshToken() {
-    // Ask backend to refresh cookies using HttpOnly refresh token
-    const response = await fetch(`${this.baseURL}/auth/refresh-token`, {
-      method: "POST",
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}`);
+    // منع إعادة المحاولة المتكررة
+    if (this._isRefreshing) {
+      throw new Error("Token refresh already in progress");
     }
-    // We ignore body since tokens are in cookies now
-    try { await response.json(); } catch (_) {}
-    return true;
+    
+    this._isRefreshing = true;
+    
+    try {
+      // Ask backend to refresh cookies using HttpOnly refresh token
+      const response = await fetch(`${this.baseURL}/auth/refresh-token`, {
+        method: "POST",
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      
+      // We ignore body since tokens are in cookies now
+      try { await response.json(); } catch (_) {}
+      return true;
+    } finally {
+      this._isRefreshing = false;
+    }
   }
 
   // Clear admin authentication data only - مسح بيانات المسؤول فقط
@@ -245,6 +260,15 @@ class ApiService {
       if (url.includes('/auth/me') && !isLoginPage) {
         console.log('ℹ️ User not authenticated - continuing as guest');
         throw new Error("غير مصادق - متابعة كضيف");
+      }
+      
+      // منع إعادة المحاولة للطلبات الحساسة التي قد تسبب حلقات لانهائية
+      const sensitiveEndpoints = ['/fcm/subscribe', '/notifications', '/auth/refresh'];
+      const isSensitiveEndpoint = sensitiveEndpoints.some(endpoint => url.includes(endpoint));
+      
+      if (isSensitiveEndpoint) {
+        console.log(`🚫 طلب حساس فشل - لن يتم إعادة التوجيه: ${url}`);
+        throw new Error("انتهت جلستك. يرجى تسجيل الدخول مرة أخرى");
       }
       
       if (!isLoginPage) {

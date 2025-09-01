@@ -18,7 +18,7 @@ func RegisterBannerRoutes(api *gin.RouterGroup, h *handlers.BannerHandler) {
 
 	// Admin routes for banners
 	bannersAdmin := api.Group("/admin")
-	bannersAdmin.Use(middleware.JWTAuth(), middleware.AdminOnly())
+	bannersAdmin.Use(middleware.AuthMiddleware(), middleware.AdminMiddleware())
 	{
 		bannersAdmin.GET("/banners", h.GetBanners) // Add a dedicated route for admin to get banners
 		bannersAdmin.POST("/banners", h.CreateBanner)

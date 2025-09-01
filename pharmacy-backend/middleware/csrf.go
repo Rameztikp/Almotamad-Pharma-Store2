@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"os"
 	"strings"
+	"pharmacy-backend/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,19 +17,29 @@ type CSRFConfig struct {
 	CookieName     string
 	HeaderName     string
 	CookiePath     string
+	CookieDomain   string
 	CookieSecure   bool
 	CookieSameSite http.SameSite
 }
 
-// DefaultCSRFConfig الإعدادات الافتراضية
-var DefaultCSRFConfig = CSRFConfig{
-	TokenLength:    32,
-	CookieName:     "csrf_token",
-	HeaderName:     "X-CSRF-Token",
-	CookiePath:     "/",
-	CookieSecure:   gin.Mode() == gin.ReleaseMode,
-	CookieSameSite: http.SameSiteStrictMode,
+// getCSRFConfig الحصول على إعدادات CSRF متوافقة مع المصادقة
+func getCSRFConfig() CSRFConfig {
+	sameSite, secure := utils.CookieSecurity()
+	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	
+	return CSRFConfig{
+		TokenLength:    32,
+		CookieName:     "csrf_token",
+		HeaderName:     "X-CSRF-Token",
+		CookiePath:     "/",
+		CookieDomain:   cookieDomain,
+		CookieSecure:   secure,
+		CookieSameSite: sameSite,
+	}
 }
+
+// DefaultCSRFConfig الإعدادات الافتراضية (محدثة ديناميكياً)
+var DefaultCSRFConfig = getCSRFConfig()
 
 // generateCSRFToken إنشاء CSRF token عشوائي
 func generateCSRFToken(length int) (string, error) {
@@ -41,7 +53,7 @@ func generateCSRFToken(length int) (string, error) {
 
 // CSRFProtection middleware للحماية من CSRF
 func CSRFProtection() gin.HandlerFunc {
-	return CSRFProtectionWithConfig(DefaultCSRFConfig)
+	return CSRFProtectionWithConfig(getCSRFConfig())
 }
 
 // CSRFProtectionWithConfig CSRF protection مع إعدادات مخصصة
@@ -94,7 +106,7 @@ func CSRFProtectionWithConfig(config CSRFConfig) gin.HandlerFunc {
 
 // SetCSRFToken إعداد CSRF token في الكوكيز
 func SetCSRFToken() gin.HandlerFunc {
-	return SetCSRFTokenWithConfig(DefaultCSRFConfig)
+	return SetCSRFTokenWithConfig(getCSRFConfig())
 }
 
 // SetCSRFTokenWithConfig إعداد CSRF token مع إعدادات مخصصة
@@ -121,13 +133,14 @@ func SetCSRFTokenWithConfig(config CSRFConfig) gin.HandlerFunc {
 			return
 		}
 
-		// إعداد الكوكيز
+		// إعداد الكوكيز مع نفس إعدادات المصادقة
+		c.SetSameSite(config.CookieSameSite)
 		c.SetCookie(
 			config.CookieName,
 			token,
 			3600, // ساعة واحدة
 			config.CookiePath,
-			"",
+			config.CookieDomain,
 			config.CookieSecure,
 			false, // يجب أن يكون accessible للجافاسكريبت
 		)
@@ -154,14 +167,16 @@ func CSRFTokenEndpoint(c *gin.Context) {
 			return
 		}
 
-		// إعداد الكوكيز
+		// إعداد الكوكيز مع نفس إعدادات المصادقة
+		config := getCSRFConfig()
+		c.SetSameSite(config.CookieSameSite)
 		c.SetCookie(
-			DefaultCSRFConfig.CookieName,
+			config.CookieName,
 			newToken,
 			3600,
-			DefaultCSRFConfig.CookiePath,
-			"",
-			DefaultCSRFConfig.CookieSecure,
+			config.CookiePath,
+			config.CookieDomain,
+			config.CookieSecure,
 			false,
 		)
 

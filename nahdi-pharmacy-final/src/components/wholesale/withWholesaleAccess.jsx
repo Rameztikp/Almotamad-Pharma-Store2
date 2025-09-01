@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useWholesaleAccess } from '../../hooks/useWholesaleAccess.jsx';
 import WholesaleUpgradeModal from './WholesaleUpgradeModal';
-import { useUserAuth } from '../../context/UserAuthContext';
+import { useUserAuth } from '../../context/UserAuthProvider';
 import { toast } from 'react-hot-toast';
 import wholesaleService from '../../services/wholesaleService';
 

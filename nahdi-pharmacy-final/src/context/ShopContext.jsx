@@ -497,16 +497,13 @@ export function ShopProvider({ children }) {
         // Clear server cart if authenticated
         try {
           await cartService.clearCart();
-          dispatch({ type: "CLEAR_CART" });
-          return { success: true };
         } catch (error) {
           console.error("Error clearing server cart:", error);
-          // Fall through to local clear
         }
       }
 
-      // For unauthenticated users or if server clear fails
-      saveLocalCart([]);
+      // Clear local cart
+      localStorage.removeItem(CART_STORAGE_KEY);
       dispatch({ type: "CLEAR_CART" });
       return { success: true };
     } catch (error) {
@@ -515,72 +512,6 @@ export function ShopProvider({ children }) {
       return { success: false, error: error.message };
     }
   };
-
-  // const login = async (email, password) => {
-  //   try {
-  //     dispatch({ type: "SET_LOADING", payload: true });
-  //     const response = await authService.login(email, password);
-
-  //     if (response.token) {
-  //       localStorage.setItem("authToken", response.token);
-  //       const userData = await authService.getProfile();
-
-  //     dispatch({ type: "SET_USER", payload: userData });
-
-  //     // Sync local cart with server
-  //     const localCart = getLocalCart();
-  //     if (localCart.length > 0) {
-  //       await syncCartWithServer(localCart);
-  //       // Clear local cart after sync
-  //       localStorage.removeItem(CART_STORAGE_KEY);
-  //     } else {
-  //       // Load server cart if no local cart
-  //       const serverCart = await cartService.getCart();
-  //       dispatch({ type: "SET_CART_ITEMS", payload: serverCart });
-  //     }
-
-  //     // Show success message
-  //     if (localCart.length > 0) {
-  //       toast.success("تم تسجيل الدخول بنجاح وتم دمج سلة التسوق الخاصة بك");
-  //     } else {
-  //       toast.success("تم تسجيل الدخول بنجاح");
-  //     }
-
-  //     return { success: true };
-  //   }
-  // } catch (error) {
-  //   console.error("Login failed:", error);
-  //   const errorMessage =
-  //     error.response?.data?.message ||
-  //     "فشل تسجيل الدخول. يرجى التحقق من البريد الإلكتروني وكلمة المرور.";
-  //   toast.error(errorMessage);
-  //   return { success: false, error: errorMessage };
-  // } finally {
-  //   dispatch({ type: "SET_LOADING", payload: false });
-  // }
-  // };
-
-  // const logout = async () => {
-  //   try {
-  //     await authService.logout();
-  //     toast.success("تم تسجيل الخروج بنجاح");
-  //   } catch (error) {
-  //     console.error("Logout error:", error);
-  //     toast.error("حدث خطأ أثناء تسجيل الخروج");
-  //   } finally {
-  //     localStorage.removeItem("authToken");
-  //     dispatch({ type: "SET_USER", payload: null });
-  //     // Keep cart in local storage for guest users
-  //     const currentCart = state.cartItems;
-  //     saveLocalCart(currentCart);
-  //     dispatch({ type: "CLEAR_CART" });
-
-  //     // Show message about cart being saved
-  //     if (currentCart.length > 0) {
-  //       toast("تم حفظ سلة التسوق الخاصة بك للمرة القادمة", { icon: "🛒" });
-  //     }
-  //   }
-  // };
 
   // Function to load products
   const loadProducts = async () => {
@@ -665,6 +596,18 @@ export function ShopProvider({ children }) {
         const response = await authService.login(credentials);
         const userData = await loadUser();
 
+        // Initialize notifications for authenticated user (only if user is authenticated)
+        const getCookie = (name) => {
+          const value = `; ${document.cookie}`;
+          const parts = value.split(`; ${name}=`);
+          if (parts.length === 2) return parts.pop().split(';').shift();
+          return null;
+        };
+        
+        if (getCookie('client_auth_status') === 'authenticated') {
+          await notificationService.initializeForAuthenticatedUser();
+        }
+
         // Load user favorites after login
         // const favoritesResponse = await favoriteService.getFavorites();
         // dispatch({ type: 'SET_FAVORITES', payload: favoritesResponse.data });
@@ -683,6 +626,13 @@ export function ShopProvider({ children }) {
         await authService.logout();
       } catch (e) {
         console.error("Logout error:", e);
+      }
+
+      // Clean up notifications on logout
+      try {
+        await notificationService.cleanupOnLogout();
+      } catch (error) {
+        console.error('Error cleaning up notifications on logout:', error);
       }
 
       // Clear user and cart on logout but keep favorites

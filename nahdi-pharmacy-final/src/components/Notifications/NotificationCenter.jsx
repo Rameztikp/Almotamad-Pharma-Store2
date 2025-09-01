@@ -60,12 +60,17 @@ const NotificationCenter = () => {
 
   const setupSSE = () => {
     try {
-      const token = localStorage.getItem('client_auth_token') || 
-                   localStorage.getItem('authToken') || 
-                   localStorage.getItem('token');
+      // Check if user is authenticated using auth status cookie
+      const getCookie = (name) => {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+      };
       
-      if (!token) {
-        console.log('No auth token available, skipping SSE setup');
+      const authStatus = getCookie('client_auth_status');
+      if (authStatus !== 'authenticated') {
+        console.log('User not authenticated, skipping SSE setup');
         setConnectionStatus('disconnected');
         return;
       }
@@ -75,11 +80,11 @@ const NotificationCenter = () => {
         eventSourceRef.current.close();
       }
 
-      // Add token as query parameter for authentication
-      const sseUrl = `/api/v1/notifications/stream?token=${encodeURIComponent(token)}`;
+      // Use HttpOnly cookies for authentication - no token in URL needed
+      const sseUrl = `${SERVER_ROOT_URL}/api/v1/notifications/stream`;
       console.log(`SSE: Connecting to ${sseUrl}`);
 
-      // Create new EventSource with credentials
+      // Create new EventSource with credentials to send HttpOnly cookies
       const newEventSource = new EventSource(sseUrl, { 
         withCredentials: true 
       });

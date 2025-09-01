@@ -21,7 +21,7 @@ import { toast } from 'react-toastify';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { customerService } from '../../services/customerService';
-import { useUserAuth } from '../../context/UserAuthContext';
+import { useUserAuth } from '../../context/UserAuthProvider';
 
 const RetailCustomersPage = () => {
   const [searchTerm, setSearchTerm] = useState('');

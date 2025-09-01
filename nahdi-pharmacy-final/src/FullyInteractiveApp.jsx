@@ -8,7 +8,7 @@ import {
 import { Toaster } from "react-hot-toast";
 import { ShopProvider } from "./context/ShopContext";
 import { AuthProvider } from "./context/AuthContext";
-import { UserAuthProvider } from "./context/UserAuthContext";
+import { UserAuthProvider } from "./context/UserAuthProvider";
 import { lazy, Suspense } from "react";
 import AppNavbar from "./components/AppNavbar";
 import HomePage from "./pages/HomePage";

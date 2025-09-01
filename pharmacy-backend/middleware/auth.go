@@ -2,17 +2,27 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"pharmacy-backend/models"
 	"pharmacy-backend/config"
+	"pharmacy-backend/utils"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
 )
 
-var jwtSecret = []byte("your-secret-key-change-this-in-production")
+// getJWTSecret الحصول على مفتاح JWT من متغيرات البيئة
+func getJWTSecret() []byte {
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		// fallback للتطوير فقط
+		return []byte("your-secret-key-change-this-in-production")
+	}
+	return []byte(jwtSecret)
+}
 
 // Claims بنية JWT claims
 type Claims struct {
@@ -38,7 +48,7 @@ func GenerateToken(user *models.User) (string, error) {
 	}
 	
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(getJWTSecret())
 }
 
 // ValidateToken التحقق من صحة JWT token
@@ -46,7 +56,7 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+		return getJWTSecret(), nil
 	})
 	
 	if err != nil {
@@ -60,33 +70,63 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
-// AuthMiddleware middleware للمصادقة
+// getTokenFromRequest استخراج التوكن من الطلب (Authorization header أو HttpOnly cookie)
+func getTokenFromRequest(c *gin.Context) string {
+	// أولاً: التحقق من Authorization header (للإدارة)
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" {
+		tokenParts := strings.Split(authHeader, " ")
+		if len(tokenParts) == 2 && tokenParts[0] == "Bearer" {
+			return tokenParts[1]
+		}
+	}
+	
+	// ثانياً: التحقق من HttpOnly cookie (للعملاء)
+	if cookie, err := c.Cookie("access_token"); err == nil && cookie != "" {
+		return cookie
+	}
+	
+	return ""
+}
+
+// AuthMiddleware middleware للمصادقة (يدعم HttpOnly cookies و Authorization headers)
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		tokenString := getTokenFromRequest(c)
+		if tokenString == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header is required",
+				"error": "Authentication required",
+				"message": "No valid token found in Authorization header or cookies",
 			})
 			c.Abort()
 			return
 		}
 		
-		// التحقق من تنسيق Bearer token
-		tokenParts := strings.Split(authHeader, " ")
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid authorization header format",
-			})
-			c.Abort()
-			return
-		}
-		
-		tokenString := tokenParts[1]
-		claims, err := ValidateToken(tokenString)
+		// التحقق من صحة التوكن باستخدام utils.VerifyJWT
+		claims, err := utils.VerifyJWT(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid token",
+				"message": err.Error(),
+			})
+			c.Abort()
+			return
+		}
+		
+		// استخراج معرف المستخدم من الـ claims
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token claims",
+			})
+			c.Abort()
+			return
+		}
+		
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid user ID in token",
 			})
 			c.Abort()
 			return
@@ -94,7 +134,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		
 		// التحقق من وجود المستخدم في قاعدة البيانات
 		var user models.User
-		if err := config.DB.Where("id = ? AND is_active = ?", claims.UserID, true).First(&user).Error; err != nil {
+		if err := config.DB.Where("id = ? AND is_active = ?", userID, true).First(&user).Error; err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "User not found or inactive",
 			})
@@ -106,6 +146,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Set("user", &user)
 		c.Set("user_id", user.ID)
 		c.Set("user_role", user.Role)
+		c.Set("token_string", tokenString)
 		
 		c.Next()
 	}
@@ -161,30 +202,37 @@ func SuperAdminMiddleware() gin.HandlerFunc {
 	}
 }
 
-// OptionalAuthMiddleware middleware اختياري للمصادقة
+// OptionalAuthMiddleware middleware اختياري للمصادقة (يدعم HttpOnly cookies و Authorization headers)
 func OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		tokenString := getTokenFromRequest(c)
+		if tokenString == "" {
 			c.Next()
 			return
 		}
 		
-		tokenParts := strings.Split(authHeader, " ")
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		// التحقق من صحة التوكن باستخدام utils.VerifyJWT
+		claims, err := utils.VerifyJWT(tokenString)
+		if err != nil {
 			c.Next()
 			return
 		}
 		
-		tokenString := tokenParts[1]
-		claims, err := ValidateToken(tokenString)
+		// استخراج معرف المستخدم من الـ claims
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok {
+			c.Next()
+			return
+		}
+		
+		userID, err := uuid.Parse(userIDStr)
 		if err != nil {
 			c.Next()
 			return
 		}
 		
 		var user models.User
-		if err := config.DB.Where("id = ? AND is_active = ?", claims.UserID, true).First(&user).Error; err != nil {
+		if err := config.DB.Where("id = ? AND is_active = ?", userID, true).First(&user).Error; err != nil {
 			c.Next()
 			return
 		}
@@ -192,6 +240,7 @@ func OptionalAuthMiddleware() gin.HandlerFunc {
 		c.Set("user", &user)
 		c.Set("user_id", user.ID)
 		c.Set("user_role", user.Role)
+		c.Set("token_string", tokenString)
 		
 		c.Next()
 	}

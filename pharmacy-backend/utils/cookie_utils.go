@@ -15,21 +15,16 @@ import (
 //   - sameSite: قيمة خاصية SameSite للكوكيز
 //   - secure: ما إذا كان يجب تعيين خاصية Secure للكوكيز
 //
-// في بيئة الإنتاج أو عند تعيين FRONTEND_ORIGIN، يستخدم SameSite=None و Secure=true
+// في بيئة الإنتاج أو عند تعيين CORS_ALLOW_ORIGINS مع HTTPS، يستخدم SameSite=None و Secure=true
 // في بيئة التطوير، يستخدم SameSite=Lax و Secure=false
 func CookieSecurity() (sameSite http.SameSite, secure bool) {
     // التحقق من وجود HTTPS في الاستضافة
     isProduction := os.Getenv("GIN_MODE") == gin.ReleaseMode
-    frontendOrigin := os.Getenv("FRONTEND_ORIGIN")
+    corsOrigins := os.Getenv("CORS_ALLOW_ORIGINS")
     
-    // إذا كانت بيئة الإنتاج وتوجد FRONTEND_ORIGIN
-    if isProduction && frontendOrigin != "" {
-        // التحقق من أن FRONTEND_ORIGIN يستخدم HTTPS
-        if strings.HasPrefix(frontendOrigin, "https://") {
-            return http.SameSiteNoneMode, true
-        }
-        // إذا لم يكن HTTPS، استخدم Lax للأمان
-        return http.SameSiteLaxMode, false
+    // إذا كانت بيئة الإنتاج أو توجد CORS origins مع HTTPS
+    if isProduction || strings.Contains(corsOrigins, "https://") {
+        return http.SameSiteNoneMode, true
     }
     
     // إعدادات التطوير

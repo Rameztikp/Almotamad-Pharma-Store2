@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useUserAuth } from '../context/UserAuthContext';
+import { useUserAuth } from '../context/UserAuthProvider';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../services/api';

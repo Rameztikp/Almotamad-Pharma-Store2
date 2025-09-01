@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { User, Mail, Phone, MapPin, Calendar, Save, Edit, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { useUserAuth } from '../context/UserAuthContext';
+import { useUserAuth } from '../context/UserAuthProvider';
 import { authService } from '../services/authService';
 import { customerService } from '../services/customerService';
 import { toast } from 'react-hot-toast';

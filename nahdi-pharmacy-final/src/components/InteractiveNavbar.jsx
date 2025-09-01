@@ -16,7 +16,7 @@ import {
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { useShop } from "../context/useShop";
-import { useUserAuth } from "../context/UserAuthContext";
+import { useUserAuth } from "../context/UserAuthProvider";
 import InteractiveFavoritesModal from "./InteractiveFavoritesModal";
 import AuthModal from "./auth/AuthModal";
 import mutamedLogo from "../assets/logo-almutamed.png";

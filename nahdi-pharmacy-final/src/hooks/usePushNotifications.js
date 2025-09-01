@@ -8,12 +8,24 @@ import {
   initializePushNotifications
 } from '../services/firebaseService';
 
-const usePushNotifications = (userId) => {
+const usePushNotifications = (userId, authChecked = false) => {
   const { t } = useTranslation();
   const [isSupported, setIsSupported] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Helper function to check authentication status
+  const getCookie = (name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  };
+
+  const isAuthenticated = () => {
+    return getCookie('client_auth_status') === 'authenticated';
+  };
 
   // Check if browser supports push notifications
   useEffect(() => {
@@ -34,12 +46,23 @@ const usePushNotifications = (userId) => {
       }
     };
 
-    checkSupport();
-  }, []);
+    // Only check support if auth is ready
+    if (authChecked) {
+      checkSupport();
+    }
+  }, [authChecked]);
 
   // Subscribe to push notifications
   const subscribe = async () => {
-    if (!isSupported || !userId) return false;
+    if (!isSupported || !userId || !authChecked || !isAuthenticated()) {
+      console.log('Cannot subscribe: missing requirements', {
+        isSupported,
+        userId: !!userId,
+        authChecked,
+        isAuthenticated: isAuthenticated()
+      });
+      return false;
+    }
     
     try {
       setIsLoading(true);
@@ -99,9 +122,9 @@ const usePushNotifications = (userId) => {
     };
   }, [isSupported]);
 
-  // Initialize push notifications when component mounts
+  // Initialize push notifications when component mounts and auth is ready
   useEffect(() => {
-    if (isSupported && userId) {
+    if (isSupported && userId && authChecked && isAuthenticated()) {
       const init = async () => {
         try {
           await initializePushNotifications();
@@ -116,7 +139,7 @@ const usePushNotifications = (userId) => {
       
       init();
     }
-  }, [isSupported, userId]);
+  }, [isSupported, userId, authChecked]);
 
   return {
     isSupported,

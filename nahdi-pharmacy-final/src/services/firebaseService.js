@@ -119,6 +119,20 @@ const initializePushNotifications = async () => {
 // Subscribe to push notifications
 const subscribeToPushNotifications = async (userId) => {
   try {
+    // Check if user is authenticated using auth status cookie
+    const getCookie = (name) => {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return null;
+    };
+    
+    const authStatus = getCookie('client_auth_status');
+    if (authStatus !== 'authenticated') {
+      console.warn('User not authenticated, cannot subscribe to push notifications');
+      return false;
+    }
+
     const token = await getFCMToken();
     if (!token) {
       console.warn('No FCM token available');

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { toast } from "react-hot-toast";
-import { useUserAuth } from "../../context/UserAuthContext";
+import { useUserAuth } from "../../context/UserAuthProvider";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 
 const AuthModal = ({ isOpen, onClose, onAuthSuccess, onLoginSuccess }) => {
