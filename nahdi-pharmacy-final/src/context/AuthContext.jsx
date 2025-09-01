@@ -25,7 +25,7 @@ export const AuthProvider = ({ children }) => {
           setLoading(false);
           return;
         }
-        const me = await ApiService.get("/auth/me");
+        const me = await ApiService.get("/auth/admin/profile");
         const user = me?.user || me?.data?.user || me;
         if (mounted && user && (user.role === 'admin' || user.role === 'super_admin')) {
           setAdmin(user);
@@ -73,9 +73,11 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(async () => {
     try {
-      await ApiService.post('/auth/logout', {});
+      // Logout from both admin and regular user sessions
+      await ApiService.post('/auth/admin/logout', {}).catch(() => {});
+      await ApiService.post('/auth/logout', {}).catch(() => {});
     } catch (_) {}
-    // مسح بيانات المسؤول فقط (لا توكنات)
+    // Clear admin data from localStorage
     localStorage.removeItem('adminData');
     setAdmin(null);
     return true;

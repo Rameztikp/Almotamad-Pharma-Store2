@@ -1,12 +1,15 @@
 // adminApi.js
 import axios from "axios";
 
-// Base URL for API requests
-const API_BASE_URL = "/api/v1";
+// Determine the base URL based on environment
+const isDevelopment = import.meta.env.MODE === "development";
+const API_BASE_URL = isDevelopment
+  ? "/api/v1"
+  : import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1";
 
 // Create a new axios instance with default config
 const api = axios.create({
-  baseURL: API_BASE_URL, // Set base URL to include /api/v1
+  baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",
     "Accept-Language": "ar",
@@ -70,19 +73,25 @@ export const adminLogin = async (email, password) => {
       console.log("🔑 محاولة تسجيل دخول مسؤول:", email);
     }
     
+    // Updated endpoint to match backend route
     const response = await api.post('/auth/admin/login', { email, password });
-    const user = response.data?.user || response.data?.data?.user || response.data;
+    
+    // Handle both response formats: {success, user, token} or {data: {user, token}}
+    const user = response.data?.user || response.data?.data?.user;
     const token = response.data?.token || response.data?.data?.token;
+    const success = response.data?.success !== false; // Default to true unless explicitly false
 
     // Save admin token to localStorage for product creation
     if (token) {
       localStorage.setItem('admin_token', token);
       localStorage.setItem('adminToken', token); // backup key
-      console.log('✅ Admin token saved to localStorage');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Admin token saved to localStorage');
+      }
     }
 
     return {
-      success: true,
+      success,
       user,
       token,
     };

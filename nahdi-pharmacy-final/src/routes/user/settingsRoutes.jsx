@@ -6,23 +6,24 @@ import ProtectedRoute from '../../components/ProtectedRoute';
 const SettingsRoutes = () => {
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <SettingsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path=":tab"
-        element={
-          <ProtectedRoute>
-            <SettingsPage />
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+    <Route
+      index
+      element={
+        <ProtectedRoute>
+          <SettingsPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path=":tab"
+      element={
+        <ProtectedRoute>
+          <SettingsPage />
+        </ProtectedRoute>
+      }
+    />
+  </Routes>
+  
   );
 };
 

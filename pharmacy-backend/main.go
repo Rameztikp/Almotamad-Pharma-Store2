@@ -80,7 +80,19 @@ func main() {
 		corsOrigins = "http://localhost:5173"
 	}
 	origins := strings.Split(corsOrigins, ",")
-	
+
+	// Function to check if origin is allowed
+	isAllowedOrigin := func(origin string) bool {
+		origin = strings.TrimSpace(origin)
+		for _, allowed := range origins {
+			if origin == strings.TrimSpace(allowed) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// CORS configuration
 	corsConfig := cors.Config{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -95,7 +107,11 @@ func main() {
 
 	// Handle preflight requests
 	r.OPTIONS("/*any", func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "http://localhost:5173")
+		origin := c.GetHeader("Origin")
+		if isAllowedOrigin(origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin") // Important for caching
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, Content-Length, X-Requested-With, X-CSRF-Token")
 		c.Header("Access-Control-Allow-Credentials", "true")

@@ -65,23 +65,8 @@ func AdminLogin(c *gin.Context) {
 	user.PasswordHash = ""
 
 	// ضبط التوكنات في ملفات تعريف الارتباط HttpOnly للمشرف
-	// ملاحظة: نحتاج لإرسال الكوكيز عبر نطاقات مختلفة خلال التطوير (localhost:5173 -> localhost:8080)
-	// في وضع الإنتاج (Release) يجب أن تكون Secure=true مع HTTPS
-	// في وضع التطوير، بعض المتصفحات قد تسمح بـ Secure=false على localhost
-	// ملاحظة مهمة: SameSite=None يتطلب Secure=true وإلا سترفضه المتصفحات
-	// لذلك في التطوير (بدون HTTPS) نستخدم SameSite=Lax و Secure=false
-	isRelease := gin.Mode() == gin.ReleaseMode
-	var sameSiteMode http.SameSite
-	var isSecure bool
-	if isRelease {
-		// Production: cross-site cookies بحاجة None + Secure=true
-		sameSiteMode = http.SameSiteNoneMode
-		isSecure = true
-	} else {
-		// Development: browsers on localhost ترفض None بدون Secure
-		sameSiteMode = http.SameSiteLaxMode
-		isSecure = false
-	}
+	// نستخدم نفس إعدادات CORS للتحقق من النطاقات المسموح بها
+	sameSiteMode, isSecure := utils.CookieSecurity()
 
 	// أولاً: احذف أي كوكيز قديمة واسعة النطاق (Path="/") كي لا تُرسل للمتجر
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -105,30 +90,44 @@ func AdminLogin(c *gin.Context) {
 		Expires:  time.Unix(0, 0),
 	})
 
-	// ثانياً: ضع كوكيز المسؤول بنطاق مسار الإدمن فقط حتى لا تُرسل لواجهات المتجر
+	// ثانياً: ضع كوكيز المسؤول بنطاق مسار api/v1 لتغطية جميع المسارات
+	sameSiteMode, secureFlag := utils.CookieSecurity()
+
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "admin_access_token",
 		Value:    accessToken,
-		Path:     "/api/v1/admin",
+		Path:     "/api/v1",
 		HttpOnly: true,
-		Secure:   isSecure,
+		Secure:   secureFlag,
 		SameSite: sameSiteMode,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "admin_refresh_token",
 		Value:    refreshToken,
-		Path:     "/api/v1/admin",
+		Path:     "/api/v1",
 		HttpOnly: true,
-		Secure:   isSecure,
+		Secure:   secureFlag,
 		SameSite: sameSiteMode,
+		MaxAge:   30 * 24 * 60 * 60,  // 30 يوم
+		Expires:  time.Now().Add(30 * 24 * time.Hour),
 	})
 
 	// إرجاع الاستجابة مع التوكن للاستخدام في localStorage
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"success": true,
 		"user":    user,
 		"token":   accessToken,
-	})
+	}
+
+	// Add cookie settings for debugging in development
+	if gin.Mode() != gin.ReleaseMode {
+		response["cookieSettings"] = gin.H{
+			"sameSite": sameSiteMode,
+			"secure":   isSecure,
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // AdminAuthRequired middleware للتحقق من صلاحيات المشرف
@@ -217,5 +216,113 @@ func GetAdminProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"user":    admin,
+	})
+}
+
+// AdminLogout handles admin logout
+func AdminLogout(c *gin.Context) {
+	sameSiteMode, secureFlag := cookieSecurity()
+
+	// Delete admin cookies from /api/v1 path
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Path:     "/api/v1",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_refresh_token",
+		Path:     "/api/v1",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	// Also delete any old cookies that might exist on root path
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Path:     "/",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "تم تسجيل الخروج بنجاح",
+	})
+}
+
+// AdminRefreshToken handles admin token refresh
+func AdminRefreshToken(c *gin.Context) {
+	// Get refresh token from cookie
+	refreshToken, err := c.Cookie("admin_refresh_token")
+	if err != nil || refreshToken == "" {
+		utils.UnauthorizedResponse(c, "جلسة منتهية الصلاحية")
+		return
+	}
+
+	// Verify refresh token
+	claims, err := utils.VerifyJWT(refreshToken)
+	if err != nil {
+		utils.UnauthorizedResponse(c, "جلسة غير صالحة")
+		return
+	}
+
+	// Check if token is a refresh token
+	tokenType, _ := claims["type"].(string)
+	if tokenType != "refresh" {
+		utils.UnauthorizedResponse(c, "نوع التوكن غير صالح")
+		return
+	}
+
+	// Generate new tokens
+	userID, _ := uuid.Parse(claims["user_id"].(string))
+	email, _ := claims["email"].(string)
+	role, _ := claims["role"].(string)
+
+	accessToken, newRefreshToken, err := utils.GenerateTokens(userID, email, role)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "فشل في إنشاء التوكنات", err.Error())
+		return
+	}
+
+	// Get security settings for cookies
+	sameSiteMode, secureFlag := utils.CookieSecurity()
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Value:    accessToken,
+		Path:     "/api/v1",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+	})
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_refresh_token",
+		Value:    newRefreshToken,
+		Path:     "/api/v1",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   30 * 24 * 60 * 60,  // 30 يوم
+		Expires:  time.Now().Add(30 * 24 * time.Hour),
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"access_token": accessToken,
 	})
 }

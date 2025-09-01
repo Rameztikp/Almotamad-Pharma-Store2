@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 
 // Lazy load the admin dashboard to improve initial load performance
 const DashboardPage = React.lazy(() => import('./pages/admin/DashboardPage'));
-const BannersManager = React.lazy(() => import('./pages/Admin/BannersManager'));
+const BannersManager = React.lazy(() => import('./pages/admin/BannersManager'));
 const SettingsRoutes = React.lazy(() => import('./routes/user/settingsRoutes'));
 const TestPushPage = React.lazy(() => import('./pages/TestPushPage'));
 

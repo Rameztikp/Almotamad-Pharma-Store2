@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // isValidEmail checks if the email has a valid format
 func isValidEmail(email string) bool {
 	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
@@ -144,25 +145,32 @@ func Register(c *gin.Context) {
 	user.PasswordHash = ""
 	
 	// Set tokens in HttpOnly cookies (client scope)
+	sameSiteMode, secureFlag := cookieSecurity()
+
+	// Access token (short-lived, typically 15-30 minutes)
 	accessCookie := &http.Cookie{
 		Name:     "client_access_token",
 		Value:    accessToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   gin.Mode() == gin.ReleaseMode,
-		SameSite: http.SameSiteStrictMode,
-		// Access token typically short-lived (e.g., 15m). Let it be session cookie by default.
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		// Optional: Set MaxAge for access token (e.g., 15 minutes)
+		// MaxAge:   15 * 60,
+		// Expires:  time.Now().Add(15 * time.Minute),
 	}
 	http.SetCookie(c.Writer, accessCookie)
 
+	// Refresh token (long-lived, e.g., 30 days)
 	refreshCookie := &http.Cookie{
 		Name:     "client_refresh_token",
 		Value:    refreshToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   gin.Mode() == gin.ReleaseMode,
-		SameSite: http.SameSiteStrictMode,
-		// Set a longer max-age for refresh tokens if desired (e.g., 30 days). Optional here.
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   30 * 24 * 60 * 60, // 30 days
+		Expires:  time.Now().Add(30 * 24 * time.Hour),
 	}
 	http.SetCookie(c.Writer, refreshCookie)
 
@@ -211,23 +219,32 @@ func Login(c *gin.Context) {
 	user.PasswordHash = ""
 	
 	// Set tokens in HttpOnly cookies (client scope)
+	sameSiteMode, secureFlag := cookieSecurity()
+
+	// Access token (short-lived, typically 15-30 minutes)
 	accessCookie := &http.Cookie{
 		Name:     "client_access_token",
 		Value:    accessToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   gin.Mode() == gin.ReleaseMode,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		// Optional: Set MaxAge for access token (e.g., 15 minutes)
+		// MaxAge:   15 * 60,
+		// Expires:  time.Now().Add(15 * time.Minute),
 	}
 	http.SetCookie(c.Writer, accessCookie)
 
+	// Refresh token (long-lived, e.g., 30 days)
 	refreshCookie := &http.Cookie{
 		Name:     "client_refresh_token",
 		Value:    refreshToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   gin.Mode() == gin.ReleaseMode,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   30 * 24 * 60 * 60, // 30 days
+		Expires:  time.Now().Add(30 * 24 * time.Hour),
 	}
 	http.SetCookie(c.Writer, refreshCookie)
 
@@ -350,62 +367,64 @@ func ChangePassword(c *gin.Context) {
 		utils.InternalServerErrorResponse(c, "Failed to update password", err.Error())
 		return
 	}
-	
-	utils.SuccessResponse(c, "Password changed successfully", nil)
+
+	utils.SuccessResponse(c, "تم تحديث كلمة المرور بنجاح", nil)
 }
 
 // Logout تسجيل الخروج (يمسح ملفات تعريف الارتباط الخاصة بالجلسة)
 func Logout(c *gin.Context) {
-    // Expire both client and admin cookies
-    // 1) Clear client cookies on '/'
-    clientNames := []string{
-        "client_access_token",
-        "client_refresh_token",
-    }
-    for _, name := range clientNames {
-        http.SetCookie(c.Writer, &http.Cookie{
-            Name:     name,
-            Value:    "",
-            Path:     "/",
-            HttpOnly: true,
-            Secure:   gin.Mode() == gin.ReleaseMode,
-            SameSite: http.SameSiteStrictMode,
-            MaxAge:   -1,
-        })
-    }
+	// Get security settings for client cookies
+	sameSiteMode, secureFlag := utils.CookieSecurity()
 
-    // 2) Clear legacy admin cookies that might have been set on '/'
-    legacyAdminNames := []string{
-        "admin_access_token",
-        "admin_refresh_token",
-    }
-    for _, name := range legacyAdminNames {
-        http.SetCookie(c.Writer, &http.Cookie{
-            Name:     name,
-            Value:    "",
-            Path:     "/",
-            HttpOnly: true,
-            Secure:   gin.Mode() == gin.ReleaseMode,
-            // legacy cookies might have been Strict; MaxAge -1 will expire regardless
-            SameSite: http.SameSiteStrictMode,
-            MaxAge:   -1,
-        })
-    }
+	// Delete client cookies
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "client_access_token",
+		Path:     "/",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
 
-    // 3) Clear current scoped admin cookies on '/api/v1/admin' with SameSite=None
-    for _, name := range legacyAdminNames {
-        http.SetCookie(c.Writer, &http.Cookie{
-            Name:     name,
-            Value:    "",
-            Path:     "/api/v1/admin",
-            HttpOnly: true,
-            Secure:   gin.Mode() == gin.ReleaseMode,
-            SameSite: http.SameSiteNoneMode,
-            MaxAge:   -1,
-        })
-    }
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "client_refresh_token",
+		Path:     "/",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   secureFlag,
+		SameSite: sameSiteMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
 
-    utils.SuccessResponse(c, "Logout successful", nil)
+	// Delete admin cookies
+	// Admin cookies always use SameSite=None and Secure in production
+	adminSecure := gin.Mode() == gin.ReleaseMode
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_access_token",
+		Path:     "/api/v1/admin",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   adminSecure,
+		SameSite: http.SameSiteNoneMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "admin_refresh_token",
+		Path:     "/api/v1/admin",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   adminSecure,
+		SameSite: http.SameSiteNoneMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	utils.SuccessResponse(c, "Logout successful", nil)
 }
 
 // RefreshTokenRequest بنية طلب تحديث التوكن
@@ -517,22 +536,32 @@ func RefreshToken(c *gin.Context) {
             SameSite: http.SameSiteNoneMode,
         })
     } else {
-        // Client cookies: keep on '/' with Strict
+        // Client cookies: use dynamic settings based on environment
+        sameSiteMode, secureFlag := utils.CookieSecurity()
+        
+        // Access token (short-lived, typically 15-30 minutes)
         http.SetCookie(c.Writer, &http.Cookie{
             Name:     "client_access_token",
             Value:    accessToken,
             Path:     "/",
             HttpOnly: true,
-            Secure:   gin.Mode() == gin.ReleaseMode,
-            SameSite: http.SameSiteStrictMode,
+            Secure:   secureFlag,
+            SameSite: sameSiteMode,
+            // Optional: Set MaxAge for access token (e.g., 15 minutes)
+            // MaxAge:   15 * 60,
+            // Expires:  time.Now().Add(15 * time.Minute),
         })
+        
+        // Refresh token (long-lived, e.g., 30 days)
         http.SetCookie(c.Writer, &http.Cookie{
             Name:     "client_refresh_token",
             Value:    refreshToken,
             Path:     "/",
             HttpOnly: true,
-            Secure:   gin.Mode() == gin.ReleaseMode,
-            SameSite: http.SameSiteStrictMode,
+            Secure:   secureFlag,
+            SameSite: sameSiteMode,
+            MaxAge:   30 * 24 * 60 * 60, // 30 days
+            Expires:  time.Now().Add(30 * 24 * time.Hour),
         })
     }
 
