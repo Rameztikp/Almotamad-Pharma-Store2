@@ -102,9 +102,9 @@ func SetAuthCookies(c *gin.Context, accessToken, refreshToken string, isAdmin bo
 		cookieDomain, secure, sameSite, prefix, c.Request.Host)
 	
 	// Log individual cookie settings
-	log.Printf("🍪 Access token cookie: %s_access_token", prefix)
-	log.Printf("🍪 Refresh token cookie: %s_refresh_token", prefix)
-	log.Printf("🍪 Auth status cookie: %s_auth_status", prefix)
+	log.Printf("🍪 Access token cookie: %saccess_token", prefix)
+	log.Printf("🍪 Refresh token cookie: %srefresh_token", prefix)
+	log.Printf("🍪 Auth status cookie: %sauth_status", prefix)
 }
 
 // ClearAuthCookies removes all auth cookies
