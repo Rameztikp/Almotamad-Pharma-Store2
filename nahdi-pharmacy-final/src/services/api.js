@@ -173,41 +173,43 @@ class ApiService {
     console.log("✅ تم مسح جميع بيانات المصادقة");
   }
 
-  // Build headers
-  buildHeaders(isFormData = false, additionalHeaders = {}) {
-    const headers = new Headers();
-
-    // Add additional headers first
-    Object.entries(additionalHeaders).forEach(([key, value]) => {
-      headers.set(key, value);
+  // Build headers for API requests
+  buildHeaders(options = {}) {
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      ...options.headers,
     });
 
-    // Set content type for JSON requests
-    if (!isFormData) {
-      headers.set("Content-Type", "application/json");
-    }
-
-    // Check for authentication status using non-HttpOnly cookies
+    // Check authentication status for debugging
     const isAdminPanel = window.location.pathname.startsWith('/admin');
     const authStatusCookie = isAdminPanel ? 
       this.getCookie('admin_auth_status') : 
       this.getCookie('client_auth_status');
-    
-    // Debug logging for authentication status
+
+    // Check for fallback token in localStorage
+    const fallbackToken = isAdminPanel ? 
+      localStorage.getItem('admin_auth_token') : 
+      localStorage.getItem('client_auth_token');
+
     console.log('🔍 Auth Status Debug:', {
       isAdminPanel,
       authStatusCookie,
+      fallbackToken: fallbackToken ? 'موجود' : 'غير موجود',
       usingHttpOnlyCookies: 'Authentication tokens are in HttpOnly cookies'
     });
 
-    // For HttpOnly cookie authentication, we don't add Authorization header
-    // The browser automatically includes the cookies
-    console.log('ℹ️ Using HttpOnly cookies for authentication - no Authorization header needed');
+    // إذا لم تكن الكوكيز متاحة، استخدم التوكن البديل
+    if (!authStatusCookie && fallbackToken) {
+      headers.set('Authorization', `Bearer ${fallbackToken}`);
+      console.log('🔑 استخدام التوكن البديل من localStorage');
+    } else {
+      console.log('ℹ️ Using HttpOnly cookies for authentication - no Authorization header needed');
+    }
 
     // Log all headers being sent
     const headersObj = {};
     headers.forEach((value, key) => {
-      headersObj[key] = value;
+      headersObj[key] = key.toLowerCase().includes('authorization') ? 'Bearer ***' : value;
     });
     console.log('📤 Request headers:', headersObj);
 

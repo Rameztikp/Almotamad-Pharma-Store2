@@ -180,12 +180,18 @@ func Login(c *gin.Context) {
 	// Clear sensitive data
 	user.PasswordHash = ""
 
-	// Set secure HTTP-only cookies
+	// Set authentication cookies
 	log.Printf("🔐 Login successful for user %s, setting cookies...", user.Email)
 	utils.SetAuthCookies(c, accessToken, refreshToken, false)
 	log.Printf("✅ Cookies set, sending response...")
 
-	utils.SuccessResponse(c, "Login successful", gin.H{"user": user})
+	// Return user data with auth status for fallback
+	c.JSON(200, gin.H{
+		"success": true,
+		"user":    user,
+		"auth_status": "authenticated",
+		"access_token": accessToken, // للاستخدام كبديل إذا فشلت الكوكيز
+	})
 }
 
 // GetProfile الحصول على ملف المستخدم

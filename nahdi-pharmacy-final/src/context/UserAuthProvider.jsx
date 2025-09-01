@@ -19,8 +19,20 @@ export const UserAuthProvider = ({ children }) => {
 
   const isAuthenticated = useCallback(() => {
     const authCookie = getCookie('client_auth_status');
-    console.log('🔍 Auth Cookie Check:', { authCookie, allCookies: document.cookie });
-    return authCookie === 'authenticated';
+    const fallbackToken = localStorage.getItem('client_auth_token');
+    console.log('🔍 Auth Cookie Check:', { 
+      authCookie, 
+      allCookies: document.cookie,
+      fallbackToken: fallbackToken ? 'موجود' : 'غير موجود'
+    });
+    
+    // إذا كانت الكوكيز متاحة، استخدمها
+    if (authCookie === 'authenticated') {
+      return true;
+    }
+    
+    // إذا لم تكن الكوكيز متاحة، تحقق من التوكن البديل
+    return !!fallbackToken;
   }, [getCookie]);
 
   // Initialize auth state by checking cookies and fetching profile

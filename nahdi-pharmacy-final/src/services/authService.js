@@ -27,7 +27,7 @@ const authService = {
     if (parts.length === 2) return parts.pop().split(';').shift();
     return null;
   },
-  // دالة مساعدة للتعامل مع استجابة تسجيل الدخول الناجحة (كوكيز فقط)
+  // دالة مساعدة للتعامل مع استجابة تسجيل الدخول الناجحة (كوكيز + توكن بديل)
   handleLoginResponse: async function (responseData) {
     try {
       // معالجة بيانات الاستجابة
@@ -35,9 +35,10 @@ const authService = {
         hasData: !!responseData,
         data: responseData ? "..." : "لا توجد بيانات",
       });
-      // في الوضع الجديد، الباك-إند يضع التوكنات في كوكيز HttpOnly
-      // نستخرج بيانات المستخدم فقط من الاستجابة (إن وُجدت)
+      
+      // استخراج بيانات المستخدم والتوكن
       const userData = responseData.user || responseData.data?.user || {};
+      const accessToken = responseData.access_token;
 
       // تخزين بيانات المستخدم الأساسية في localStorage
       if (userData) {
@@ -53,10 +54,19 @@ const authService = {
           "💾 حفظ بيانات المستخدم في التخزين المحلي:",
           userDataToStore
         );
+        
         // تخزين بشكل مُقسم حسب النوع لمنع التسريب بين الجلسات
         const isAdmin = userData.role === 'admin' || userData.role === 'super_admin';
         const dataKey = getUserDataKey(isAdmin);
         localStorage.setItem(dataKey, JSON.stringify(userDataToStore));
+        
+        // حفظ التوكن كبديل للكوكيز إذا فشلت
+        if (accessToken) {
+          const tokenKey = isAdmin ? 'admin_auth_token' : 'client_auth_token';
+          localStorage.setItem(tokenKey, accessToken);
+          console.log("🔑 حفظ التوكن كبديل للكوكيز:", tokenKey);
+        }
+        
         // تنظيف المفتاح العام القديم إن وُجد لتفادي التسريب بين الأدوار
         localStorage.removeItem("userData");
       }
