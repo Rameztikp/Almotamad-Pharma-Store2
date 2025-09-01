@@ -152,8 +152,11 @@ func main() {
 	// Initialize handlers
 	bannerHandler := handlers.NewBannerHandler(config.DB)
 
-	// FCM routes
-	fcmRoutes := r.Group("/api/fcm")
+	// Group routes with version and API prefix
+	api := r.Group("/api/v1")
+	
+	// FCM routes - moved to /api/v1/fcm to match frontend expectations
+	fcmRoutes := api.Group("/fcm")
 	fcmRoutes.Use(middleware.JWTAuth())
 	{
 		// Register FCM token
@@ -167,9 +170,6 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"message": "FCM test endpoint works!"})
 		})
 	}
-
-	// Group routes with version and API prefix
-	api := r.Group("/api/v1")
 	{
 		// Authentication routes
 		auth := api.Group("/auth")

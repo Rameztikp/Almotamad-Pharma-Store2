@@ -20,6 +20,13 @@ const getDisplayName = (obj = {}) => {
 const getUserDataKey = (isAdmin = false) => isAdmin ? 'admin_user_data' : 'client_user_data';
 
 const authService = {
+  // دالة مساعدة لقراءة الكوكيز
+  getCookie: function(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  },
   // دالة مساعدة للتعامل مع استجابة تسجيل الدخول الناجحة (كوكيز فقط)
   handleLoginResponse: async function (responseData) {
     try {
@@ -266,6 +273,13 @@ const authService = {
   getProfile: async function () {
     try {
       console.log("🔍 محاولة جلب بيانات المستخدم...");
+
+      // فحص حالة المصادقة من الكوكيز أولاً
+      const authStatus = this.getCookie('client_auth_status') || this.getCookie('admin_auth_status');
+      if (!authStatus || authStatus !== 'authenticated') {
+        console.log("❌ لا توجد مصادقة صالحة في الكوكيز");
+        return null;
+      }
 
       console.log("🌐 إرسال طلب للحصول على ملف المستخدم...");
 

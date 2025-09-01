@@ -231,7 +231,7 @@ class ApiService {
     });
     console.log('Response Headers:', responseHeaders);
     
-    // Handle unauthorized (401) - يتم معالجته بشكل منفصل لأنه يحتاج إلى تحديث الصفحة
+    // Handle unauthorized (401) - معالجة محسنة لتجنب التحديث المستمر
     if (response.status === 401) {
       console.error("❌ 401 Unauthorized - Invalid or expired token");
       console.groupEnd();
@@ -240,6 +240,13 @@ class ApiService {
       const isLoginPage = window.location.pathname.includes('/login') || 
                          window.location.pathname.includes('/admin/login');
       
+      // إذا كان الطلب لـ /auth/me وليس في صفحة تسجيل الدخول، لا تعيد التوجيه
+      // فقط ارجع خطأ صامت للسماح للتطبيق بالعمل كمستخدم غير مسجل
+      if (url.includes('/auth/me') && !isLoginPage) {
+        console.log('ℹ️ User not authenticated - continuing as guest');
+        throw new Error("غير مصادق - متابعة كضيف");
+      }
+      
       if (!isLoginPage) {
         // Check if this is a token refresh request to prevent infinite loops
         if (url.includes('/auth/refresh')) {
@@ -247,17 +254,15 @@ class ApiService {
           // Clear all auth data and redirect to login
           this.clearAuth();
           window.location.href = '/login?session=expired';
-        } else {
-          // مسح بيانات المصادقة بناءً على نوع الصفحة
+        } else if (!url.includes('/auth/me')) {
+          // فقط أعد التوجيه للطلبات التي تتطلب مصادقة (ليس /auth/me)
           const isAdminPanel = window.location.pathname.startsWith('/admin');
           
           if (isAdminPanel) {
             this.clearAdminAuth();
-            // إعادة التوجيه إلى صفحة تسجيل الدخول للمسؤول
             window.location.href = '/admin/login?session=expired';
           } else {
             this.clearClientAuth();
-            // إعادة التوجيه إلى صفحة تسجيل الدخول للمستخدم العادي
             window.location.href = '/login?session=expired';
           }
         }
@@ -298,6 +303,12 @@ class ApiService {
     if (response.status === 404) {
       console.error("Endpoint not found:", url);
       console.groupEnd();
+      
+      // For FCM endpoints, don't retry to prevent infinite loops
+      if (url.includes('/fcm/')) {
+        throw new Error("خدمة الإشعارات غير متوفرة حالياً");
+      }
+      
       throw new Error("الرابط المطلوب غير موجود");
     }
 
@@ -465,7 +476,12 @@ class ApiService {
 
       // Retry logic for failed requests
       if (retries > 0 && !error.status) {
-        // Don't retry 4xx errors
+        // Don't retry 4xx errors or FCM endpoints to prevent infinite loops
+        if (url.includes('/fcm/')) {
+          console.log('❌ FCM endpoint failed - not retrying to prevent infinite loop');
+          throw error;
+        }
+        
         console.log(`🔄 Retrying request (${retries} attempts left)...`);
         return this.request(method, endpoint, data, isFormData, retries - 1);
       }

@@ -156,9 +156,25 @@ export function ShopProvider({ children }) {
   }, [state.user]);
 
   // Check if user is already logged in on initial load
+  // دالة مساعدة لقراءة الكوكيز
+  const getCookie = (name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  };
+
   // Load user data function
   const loadUser = useCallback(async () => {
     try {
+      // فحص حالة المصادقة من الكوكيز أولاً لتجنب التحديث المستمر
+      const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+      if (!authStatus || authStatus !== 'authenticated') {
+        console.log("❌ لا توجد مصادقة صالحة في الكوكيز - تخطي جلب البيانات");
+        dispatch({ type: "SET_USER", payload: null });
+        return null;
+      }
+
       const userData = await authService.getProfile();
       if (userData) {
         dispatch({ type: "SET_USER", payload: userData });
@@ -187,7 +203,7 @@ export function ShopProvider({ children }) {
     checkAuthStatus();
   }, []);
 
-  // Load initial data and sync with server if authenticated
+  // Load initial data and sync with server if authenticated - run only once
   useEffect(() => {
     loadInitialData();
 
@@ -260,20 +276,15 @@ export function ShopProvider({ children }) {
     };
 
     syncCartOnLogin();
-  }, []);
+  }, []); // Empty dependency array to run only once
 
   const loadInitialData = async () => {
     try {
       dispatch({ type: "SET_LOADING", payload: true });
 
-      // تحميل المنتجات والفئات
-      const [productsResponse, categoriesResponse] = await Promise.all([
-        productService.getAllProducts(),
-        categoryService.getCategories(),
-      ]);
-
-      dispatch({ type: "SET_PRODUCTS", payload: productsResponse.data });
-      dispatch({ type: "SET_CATEGORIES", payload: categoriesResponse });
+      // Skip loading products and categories here - let individual pages handle their own data
+      // This prevents duplicate API calls when HomePage also loads the same data
+      console.log('🔧 ShopContext: Skipping product/category loading to prevent duplicates');
 
       // تحميل المفضلات المحفوظة
       const savedFavorites = getLocalFavorites();
@@ -287,21 +298,25 @@ export function ShopProvider({ children }) {
         window.location?.pathname?.startsWith("/admin");
       if (!isAdminRoute) {
         try {
-          const cartResponse = await cartService.getCart();
-          dispatch({ type: "SET_CART_ITEMS", payload: cartResponse.data });
+          // Only load cart if user is authenticated (has auth cookie)
+          const authStatusCookie = getCookie('client_auth_status');
+          if (authStatusCookie === 'authenticated') {
+            const cartResponse = await cartService.getCart();
+            dispatch({ type: "SET_CART_ITEMS", payload: cartResponse.data });
 
-          try {
-            const userResponse = await authService.getProfile();
-            if (userResponse) {
-              dispatch({ type: "SET_USER", payload: userResponse });
+            try {
+              const userResponse = await authService.getProfile();
+              if (userResponse) {
+                dispatch({ type: "SET_USER", payload: userResponse });
+              }
+            } catch (error) {
+              console.error("Error loading user profile:", error);
             }
-          } catch (error) {
-            console.error("Error loading user profile:", error);
           }
         } catch (error) {
           // تجاهل 401 للمستخدم غير المسجل
           if (error?.response?.status !== 401) {
-            console.error("Error loading user data:", error);
+            console.error("Error loading cart data:", error);
           }
         }
       }

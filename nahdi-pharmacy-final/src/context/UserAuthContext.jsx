@@ -7,6 +7,14 @@ import React, {
 } from "react";
 import { authService } from "../services/authService";
 
+// دالة مساعدة لقراءة الكوكيز
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+};
+
 export const UserAuthContext = createContext(null);
 
 export const UserAuthProvider = ({ children }) => {
@@ -28,6 +36,15 @@ export const UserAuthProvider = ({ children }) => {
   // Load user data on initial render
   const loadUser = useCallback(async () => {
     try {
+      // فحص حالة المصادقة من الكوكيز أولاً لتجنب التحديث المستمر
+      const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+      if (!authStatus || authStatus !== 'authenticated') {
+        console.log("❌ لا توجد مصادقة صالحة في الكوكيز - تخطي جلب البيانات");
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       // Cookie-based: just ask backend for current user
       const userData = await authService.getProfile();
       if (userData) {
@@ -44,10 +61,20 @@ export const UserAuthProvider = ({ children }) => {
 
   // Sync auth state across tabs via custom event and storage changes of user data
   useEffect(() => {
-    const handleAuthEvent = () => loadUser();
+    const handleAuthEvent = () => {
+      // فحص الكوكيز قبل تحميل المستخدم
+      const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+      if (authStatus && authStatus === 'authenticated') {
+        loadUser();
+      }
+    };
     const handleStorageChange = (e) => {
       if (e.key === 'client_user_data' || e.key === null) {
-        loadUser();
+        // فحص الكوكيز قبل تحميل المستخدم
+        const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+        if (authStatus && authStatus === 'authenticated') {
+          loadUser();
+        }
       }
     };
     window.addEventListener("authStateChanged", handleAuthEvent);
@@ -59,7 +86,13 @@ export const UserAuthProvider = ({ children }) => {
   }, [loadUser]);
 
   useEffect(() => {
-    loadUser();
+    // فحص الكوكيز قبل التحميل الأولي
+    const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+    if (authStatus && authStatus === 'authenticated') {
+      loadUser();
+    } else {
+      setLoading(false);
+    }
   }, [loadUser]);
 
   const login = async (identifier, password) => {
@@ -173,7 +206,11 @@ export const UserAuthProvider = ({ children }) => {
   const checkAuthStatus = () => {
     // Cookie-based: authenticated if we have a user loaded
     if (!user) {
-      loadUser();
+      // فحص الكوكيز أولاً قبل محاولة تحميل المستخدم
+      const authStatus = getCookie('client_auth_status') || getCookie('admin_auth_status');
+      if (authStatus && authStatus === 'authenticated') {
+        loadUser();
+      }
       return false;
     }
     return true;

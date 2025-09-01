@@ -529,7 +529,7 @@ const initializeFCM = async () => {
 const registerFCMToken = async (token) => {
   try {
     const deviceId = await getDeviceId();
-    await apiRequest('/api/v1/fcm/subscribe', {
+    await apiRequest('/fcm/subscribe', {
       method: 'POST',
       body: JSON.stringify({ 
         token,
